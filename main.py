@@ -38,6 +38,12 @@ def save_config(cfg: dict) -> None:
 
 config = load_config()
 
+# ── Global hotkey variables (moved to top to fix syntax error) ────────────────
+_last_ctrl_c_time = 0.0
+_waiting_for_combo = False
+_last_trigger_time = 0.0
+_trigger_lock = threading.Lock()
+
 # ── OpenAI client helper ──────────────────────────────────────────────────────
 def get_client():
     return OpenAI(
@@ -132,10 +138,6 @@ def position_popup(popup):
     if y + ph > sh: y = sh - ph - 10
     popup.geometry(f"+{x}+{y}")
 
-# ── Global debounce & lock (fixes multiple popups) ────────────────────────────
-_last_trigger_time = 0.0
-_trigger_lock = threading.Lock()
-
 # ── Translation popup ─────────────────────────────────────────────────────────
 def show_translate_popup(original: str, translation: str) -> None:
     popup = tk.Tk()
@@ -150,7 +152,6 @@ def show_translate_popup(original: str, translation: str) -> None:
         try: popup.destroy()
         except Exception: pass
 
-    # Top bar
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
     tk.Label(top, text=f"→ {config['target_language']}", bg="#313244", fg="#cdd6f4",
@@ -185,7 +186,6 @@ def show_translate_popup(original: str, translation: str) -> None:
     bind_close_outside(popup, close)
     make_draggable(popup)
     position_popup(popup)
-
     popup.focus_force()
     popup.mainloop()
 
@@ -204,7 +204,6 @@ def show_chat_popup(selected_text: str) -> None:
         try: popup.destroy()
         except Exception: pass
 
-    # Top bar
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
     tk.Label(top, text="💬 Chat", bg="#313244", fg="#cdd6f4",
@@ -235,7 +234,6 @@ def show_chat_popup(selected_text: str) -> None:
                  font=("Segoe UI", 10), wraplength=360, justify="left",
                  padx=8, pady=4).pack(anchor=anchor)
 
-    # Input
     input_frame = tk.Frame(popup, bg="#1e1e2e")
     input_frame.pack(fill="x", padx=pad, pady=(4, pad))
 
@@ -276,8 +274,8 @@ def show_chat_popup(selected_text: str) -> None:
     make_draggable(popup)
     position_popup(popup)
 
-    # ── STRONG AUTO-FOCUS FIX ─────────────────────────────────────────────────
-    popup.grab_set()                    # makes popup "modal"
+    # Strong auto-focus (works reliably now)
+    popup.grab_set()
     popup.lift()
 
     def force_focus():
@@ -286,7 +284,6 @@ def show_chat_popup(selected_text: str) -> None:
         input_entry.icursor(tk.END)
         input_entry.select_range(0, tk.END)
 
-    # Multiple attempts with increasing delay (this fixes the focus issue)
     popup.after(0, force_focus)
     popup.after(30, force_focus)
     popup.after(80, force_focus)
@@ -294,20 +291,20 @@ def show_chat_popup(selected_text: str) -> None:
 
     popup.mainloop()
 
-# ── Hotkey engine with debounce (fixes multiple popups) ───────────────────────
+# ── Hotkey engine (fixed global declarations) ─────────────────────────────────
 def on_key(event):
-    global _last_trigger_time
+    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time   # ← MUST be at the top
+
     ctrl_held = keyboard.is_pressed("ctrl")
     now = time.time()
 
-    # Debounce: ignore any trigger within 400ms of previous one
+    # Debounce protection (prevents multiple popups)
     with _trigger_lock:
         if now - _last_trigger_time < 0.4:
             return
 
     if event.name == "c" and ctrl_held:
         if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
-            global _waiting_for_combo
             _waiting_for_combo = False
             with _trigger_lock:
                 _last_trigger_time = now
@@ -318,7 +315,6 @@ def on_key(event):
 
     elif event.name == "space" and ctrl_held and _waiting_for_combo:
         if now - _last_ctrl_c_time < 0.6:
-            global _waiting_for_combo
             _waiting_for_combo = False
             with _trigger_lock:
                 _last_trigger_time = now
@@ -330,9 +326,6 @@ def on_key(event):
         _waiting_for_combo = False
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
-_last_ctrl_c_time = 0.0
-_waiting_for_combo = False
-
 def handle_translate():
     time.sleep(0.05)
     text = pyperclip.paste().strip()
