@@ -195,6 +195,35 @@ def render_markdown_to_text(widget: tk.Text, markdown_str: str) -> None:
         _insert_block(widget, node)
 
 
+# ── Right-click copy menu ─────────────────────────────────────────────────────
+
+def _show_copy_menu(widget: tk.Text, event) -> str:
+    """Show a minimal right-click context menu with Copy / Select All."""
+    menu = tk.Menu(widget, tearoff=0,
+                   bg=SURFACE, fg=TEXT, activebackground=OVERLAY,
+                   activeforeground=TEXT, relief="flat", bd=0,
+                   font=("Segoe UI", 9))
+
+    def _copy():
+        try:
+            sel = widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            sel = widget.get("1.0", tk.END).strip()
+        if sel:
+            widget.clipboard_clear()
+            widget.clipboard_append(sel)
+
+    def _select_all():
+        widget.tag_add(tk.SEL, "1.0", tk.END)
+        widget.mark_set(tk.INSERT, "1.0")
+        widget.see(tk.INSERT)
+
+    menu.add_command(label="Copy",       command=_copy)
+    menu.add_command(label="Select all", command=_select_all)
+    menu.tk_popup(event.x_root, event.y_root)
+    return "break"
+
+
 # ── Scrollable message frame ──────────────────────────────────────────────────
 
 class ScrollableMessageFrame(tk.Frame):
@@ -293,9 +322,12 @@ class ScrollableMessageFrame(tk.Frame):
             bd=bubble_bd,
             padx=10, pady=8,
             wrap="word",
-            cursor="arrow",        # looks like a label, not an editor
+            cursor="xterm",        # I-beam: signals text is selectable
             state="normal",
             highlightthickness=0,
+            selectbackground=OVERLAY,
+            selectforeground=TEXT,
+            inactiveselectbackground=OVERLAY,  # keep highlight when focus leaves
             spacing1=2, spacing3=2,
             width=52,              # characters; controls natural wrap width
         )
@@ -312,17 +344,46 @@ class ScrollableMessageFrame(tk.Frame):
         if len(stripped) < len(content) - 1:
             msg_text.delete(f"1.0 + {len(stripped)}c", tk.END)
 
-        msg_text.config(state="disabled")   # read-only after insertion
+        # Keep the widget visually read-only: block every keystroke that would
+        # insert or delete content, but let selection shortcuts through.
+        # Using state="disabled" would block selection entirely, so we stay
+        # in state="normal" and intercept keys instead.
+        _ALLOWED_KEY_PATTERNS = {
+            "<Control-a>", "<Control-A>",   # select all
+            "<Control-c>", "<Control-C>",   # copy
+            "<Control-Insert>",             # copy (alternate)
+            "<Shift-Insert>",               # paste — we block below anyway
+        }
+        def _block_edits(event):
+            # Allow copy / select-all / cursor movement / scrolling
+            if event.state & 0x4:          # Ctrl held
+                if event.keysym.lower() in ("a", "c"):
+                    return                 # let Tk handle these natively
+                return "break"             # block all other Ctrl combos
+            # Allow navigation and selection keys
+            if event.keysym in (
+                "Left", "Right", "Up", "Down",
+                "Home", "End", "Prior", "Next",   # Page Up / Down
+                "Shift_L", "Shift_R",
+                "Control_L", "Control_R",
+            ):
+                return
+            # Block everything else (printable chars, Delete, BackSpace…)
+            return "break"
+
+        msg_text.bind("<Key>", _block_edits)
+        # Also block right-click paste via the default Tk context menu
+        msg_text.bind("<Button-3>", lambda e: _show_copy_menu(msg_text, e))
+
+        msg_text.config(state="normal")   # stays normal so selection works
 
         # Auto-fit height: count display lines
         msg_text.update_idletasks()
         line_count = int(msg_text.index(tk.END).split(".")[0])
         msg_text.config(height=max(1, line_count))
 
-        # Re-bind mousewheel inside this widget so scrolling still works
+        # Re-bind mousewheel so scrolling still works inside the bubble
         self._bind_mousewheel(msg_text)
-        # But block drag events from propagating out of the text widget
-        msg_text.bind("<Button-1>",   lambda e: "break" if not is_user else None)
 
         msg_text.pack(fill="x", anchor="e" if is_user else "w")
 
