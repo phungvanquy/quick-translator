@@ -17,7 +17,7 @@ from openai import OpenAI
 import pystray
 from PIL import Image, ImageDraw
 
-from chat_popup import show_chat_popup as _show_chat_popup
+from chat_popup import show_chat_popup as _show_chat_popup, _configure_tags, render_markdown_to_text
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".quicktranslator_config.json")
@@ -217,7 +217,13 @@ def show_translate_popup(original: str, translation: str) -> None:
                          selectbackground=OVERLAY, selectforeground=TEXT_C,
                          inactiveselectbackground=OVERLAY,
                          height=1, width=48)
-    trans_text.insert("1.0", translation)
+    _configure_tags(trans_text)
+    render_markdown_to_text(trans_text, translation)
+    # Strip trailing blank lines
+    content = trans_text.get("1.0", tk.END)
+    stripped = content.rstrip("\n")
+    if len(stripped) < len(content) - 1:
+        trans_text.delete(f"1.0 + {len(stripped)}c", tk.END)
     trans_text.config(state="normal")
     # Auto-fit height
     trans_text.update_idletasks()
