@@ -93,7 +93,6 @@ def chat_with_context(selected_text: str, user_question: str, history: list) -> 
 
 # ── Popup Dragging ────────────────────────────────────────────────────────────
 def make_draggable(popup):
-    """Make popup draggable by clicking and dragging anywhere on it."""
     drag_data = {"x": 0, "y": 0}
 
     def start_drag(event):
@@ -112,7 +111,6 @@ def make_draggable(popup):
 
 # ── Shared popup helpers ──────────────────────────────────────────────────────
 def bind_close_outside(popup, close_fn):
-    """Close popup when user clicks outside it."""
     def on_click_outside(e=None):
         try:
             px, py = popup.winfo_rootx(), popup.winfo_rooty()
@@ -122,23 +120,21 @@ def bind_close_outside(popup, close_fn):
                 close_fn()
         except Exception:
             pass
-
     popup.bind_all("<Button-1>", on_click_outside, add=True)
 
 def position_popup(popup):
-    """Position popup near cursor, keeping it on screen."""
     popup.update_idletasks()
     x = popup.winfo_pointerx() + 16
     y = popup.winfo_pointery() + 16
     pw, ph = popup.winfo_width(), popup.winfo_height()
     sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
-
-    if x + pw > sw:
-        x = sw - pw - 10
-    if y + ph > sh:
-        y = sh - ph - 10
-
+    if x + pw > sw: x = sw - pw - 10
+    if y + ph > sh: y = sh - ph - 10
     popup.geometry(f"+{x}+{y}")
+
+# ── Global debounce & lock (fixes multiple popups) ────────────────────────────
+_last_trigger_time = 0.0
+_trigger_lock = threading.Lock()
 
 # ── Translation popup ─────────────────────────────────────────────────────────
 def show_translate_popup(original: str, translation: str) -> None:
@@ -147,65 +143,47 @@ def show_translate_popup(original: str, translation: str) -> None:
     popup.attributes("-topmost", True)
     popup.attributes("-alpha", 0.97)
     popup.configure(bg="#1e1e2e")
-    popup.geometry("+0+0")
 
     pad = 14
 
     def close(e=None):
-        try:
-            popup.destroy()
-        except Exception:
-            pass
+        try: popup.destroy()
+        except Exception: pass
 
     # Top bar
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
-
-    tk.Label(
-        top, text=f"→ {config['target_language']}",
-        bg="#313244", fg="#cdd6f4",
-        font=("Segoe UI", 9), padx=8, pady=3,
-    ).pack(side="left")
-
-    tk.Button(
-        top, text="✕", command=close,
-        bg="#1e1e2e", fg="#6c7086", font=("Segoe UI", 10),
-        relief="flat", padx=4, pady=0, cursor="hand2",
-        activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
+    tk.Label(top, text=f"→ {config['target_language']}", bg="#313244", fg="#cdd6f4",
+             font=("Segoe UI", 9), padx=8, pady=3).pack(side="left")
+    tk.Button(top, text="✕", command=close, bg="#1e1e2e", fg="#6c7086",
+              font=("Segoe UI", 10), relief="flat", padx=4, pady=0,
+              cursor="hand2", activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
     ).pack(side="right")
 
-    # Original text preview
     orig_short = original if len(original) < 80 else original[:77] + "…"
-    tk.Label(
-        popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
-        font=("Segoe UI", 9), wraplength=380, justify="left",
+    tk.Label(popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
+             font=("Segoe UI", 9), wraplength=380, justify="left"
     ).pack(anchor="w", padx=pad, pady=(0, 6))
-
     tk.Frame(popup, bg="#313244", height=1).pack(fill="x", padx=pad)
 
-    # Translation
-    tk.Label(
-        popup, text=translation, bg="#1e1e2e", fg="#cdd6f4",
-        font=("Segoe UI", 12), wraplength=380, justify="left",
+    tk.Label(popup, text=translation, bg="#1e1e2e", fg="#cdd6f4",
+             font=("Segoe UI", 12), wraplength=380, justify="left"
     ).pack(anchor="w", padx=pad, pady=(8, 4))
 
-    # Copy button
     def copy_translation():
         pyperclip.copy(translation)
         copy_btn.config(text="Copied!")
         popup.after(800, close)
 
-    copy_btn = tk.Button(
-        popup, text="Copy", command=copy_translation,
-        bg="#313244", fg="#cdd6f4", font=("Segoe UI", 9),
-        relief="flat", padx=10, pady=4, cursor="hand2",
-        activebackground="#45475a", activeforeground="#cdd6f4",
-    )
+    copy_btn = tk.Button(popup, text="Copy", command=copy_translation,
+                         bg="#313244", fg="#cdd6f4", font=("Segoe UI", 9),
+                         relief="flat", padx=10, pady=4, cursor="hand2",
+                         activebackground="#45475a", activeforeground="#cdd6f4")
     copy_btn.pack(anchor="e", padx=pad, pady=(4, pad))
 
     popup.bind("<Escape>", close)
     bind_close_outside(popup, close)
-    make_draggable(popup)          # ← Added draggable
+    make_draggable(popup)
     position_popup(popup)
 
     popup.focus_force()
@@ -218,43 +196,30 @@ def show_chat_popup(selected_text: str) -> None:
     popup.attributes("-topmost", True)
     popup.attributes("-alpha", 0.97)
     popup.configure(bg="#1e1e2e")
-    popup.geometry("+0+0")
 
     pad = 14
-    chat_history = []  # list of {"role": ..., "content": ...}
+    chat_history = []
 
     def close(e=None):
-        try:
-            popup.destroy()
-        except Exception:
-            pass
+        try: popup.destroy()
+        except Exception: pass
 
     # Top bar
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
-
-    tk.Label(
-        top, text="💬 Chat", bg="#313244", fg="#cdd6f4",
-        font=("Segoe UI", 9), padx=8, pady=3,
-    ).pack(side="left")
-
-    tk.Button(
-        top, text="✕", command=close,
-        bg="#1e1e2e", fg="#6c7086", font=("Segoe UI", 10),
-        relief="flat", padx=4, pady=0, cursor="hand2",
-        activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
+    tk.Label(top, text="💬 Chat", bg="#313244", fg="#cdd6f4",
+             font=("Segoe UI", 9), padx=8, pady=3).pack(side="left")
+    tk.Button(top, text="✕", command=close, bg="#1e1e2e", fg="#6c7086",
+              font=("Segoe UI", 10), relief="flat", padx=4, pady=0,
+              cursor="hand2", activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
     ).pack(side="right")
 
-    # Selected text preview
     orig_short = selected_text if len(selected_text) < 80 else selected_text[:77] + "…"
-    tk.Label(
-        popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
-        font=("Segoe UI", 9), wraplength=400, justify="left",
+    tk.Label(popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
+             font=("Segoe UI", 9), wraplength=400, justify="left"
     ).pack(anchor="w", padx=pad, pady=(0, 6))
-
     tk.Frame(popup, bg="#313244", height=1).pack(fill="x", padx=pad)
 
-    # Chat history display
     history_frame = tk.Frame(popup, bg="#1e1e2e")
     history_frame.pack(fill="both", padx=pad, pady=(8, 4), expand=True)
 
@@ -264,37 +229,25 @@ def show_chat_popup(selected_text: str) -> None:
         bubble_fg = "#89b4fa" if is_user else "#cdd6f4"
         prefix = "You: " if is_user else "AI: "
         anchor = "e" if is_user else "w"
-
         row_frame = tk.Frame(history_frame, bg="#1e1e2e")
         row_frame.pack(fill="x", pady=2, anchor=anchor)
+        tk.Label(row_frame, text=prefix + text, bg=bubble_bg, fg=bubble_fg,
+                 font=("Segoe UI", 10), wraplength=360, justify="left",
+                 padx=8, pady=4).pack(anchor=anchor)
 
-        tk.Label(
-            row_frame,
-            text=prefix + text,
-            bg=bubble_bg, fg=bubble_fg,
-            font=("Segoe UI", 10),
-            wraplength=360, justify="left",
-            padx=8, pady=4,
-        ).pack(anchor=anchor)
-
-    # Input row
+    # Input
     input_frame = tk.Frame(popup, bg="#1e1e2e")
     input_frame.pack(fill="x", padx=pad, pady=(4, pad))
 
     input_var = tk.StringVar()
-    input_entry = tk.Entry(
-        input_frame, textvariable=input_var,
-        bg="#313244", fg="#cdd6f4",
-        insertbackground="#cdd6f4",
-        font=("Segoe UI", 10), relief="flat",
-        width=40,
-    )
+    input_entry = tk.Entry(input_frame, textvariable=input_var,
+                           bg="#313244", fg="#cdd6f4", insertbackground="#cdd6f4",
+                           font=("Segoe UI", 10), relief="flat", width=40)
     input_entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 6))
 
     def send(e=None):
         question = input_var.get().strip()
-        if not question:
-            return
+        if not question: return
         input_var.set("")
         send_btn.config(state="disabled", text="…")
         add_message("user", question)
@@ -304,36 +257,114 @@ def show_chat_popup(selected_text: str) -> None:
             reply = chat_with_context(selected_text, question, chat_history)
             chat_history.append({"role": "user", "content": question})
             chat_history.append({"role": "assistant", "content": reply})
-
             popup.after(0, lambda: add_message("assistant", reply))
             popup.after(0, lambda: send_btn.config(state="normal", text="Send"))
-            popup.after(0, lambda: popup.update_idletasks())
+            popup.after(0, popup.update_idletasks)
 
         threading.Thread(target=do_chat, daemon=True).start()
 
-    send_btn = tk.Button(
-        input_frame, text="Send", command=send,
-        bg="#89b4fa", fg="#1e1e2e",
-        font=("Segoe UI", 9, "bold"),
-        relief="flat", padx=12, pady=6, cursor="hand2",
-        activebackground="#74c7ec", activeforeground="#1e1e2e",
-    )
+    send_btn = tk.Button(input_frame, text="Send", command=send,
+                         bg="#89b4fa", fg="#1e1e2e", font=("Segoe UI", 9, "bold"),
+                         relief="flat", padx=12, pady=6, cursor="hand2",
+                         activebackground="#74c7ec", activeforeground="#1e1e2e")
     send_btn.pack(side="right")
 
     input_entry.bind("<Return>", send)
 
-    # Make popup draggable and bind close events
     popup.bind("<Escape>", close)
     bind_close_outside(popup, close)
-    make_draggable(popup)           # ← Added draggable
-
+    make_draggable(popup)
     position_popup(popup)
 
-    # CRITICAL FIX: Auto-focus input field
-    popup.after(10, input_entry.focus_force)
-    popup.after(50, lambda: input_entry.icursor(tk.END))  # Place cursor at end
+    # ── STRONG AUTO-FOCUS FIX ─────────────────────────────────────────────────
+    popup.grab_set()                    # makes popup "modal"
+    popup.lift()
+
+    def force_focus():
+        popup.focus_force()
+        input_entry.focus_force()
+        input_entry.icursor(tk.END)
+        input_entry.select_range(0, tk.END)
+
+    # Multiple attempts with increasing delay (this fixes the focus issue)
+    popup.after(0, force_focus)
+    popup.after(30, force_focus)
+    popup.after(80, force_focus)
+    popup.after(150, force_focus)
 
     popup.mainloop()
+
+# ── Hotkey engine with debounce (fixes multiple popups) ───────────────────────
+def on_key(event):
+    global _last_trigger_time
+    ctrl_held = keyboard.is_pressed("ctrl")
+    now = time.time()
+
+    # Debounce: ignore any trigger within 400ms of previous one
+    with _trigger_lock:
+        if now - _last_trigger_time < 0.4:
+            return
+
+    if event.name == "c" and ctrl_held:
+        if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
+            global _waiting_for_combo
+            _waiting_for_combo = False
+            with _trigger_lock:
+                _last_trigger_time = now
+            threading.Thread(target=handle_translate, daemon=True).start()
+        else:
+            _last_ctrl_c_time = now
+            _waiting_for_combo = True
+
+    elif event.name == "space" and ctrl_held and _waiting_for_combo:
+        if now - _last_ctrl_c_time < 0.6:
+            global _waiting_for_combo
+            _waiting_for_combo = False
+            with _trigger_lock:
+                _last_trigger_time = now
+            threading.Thread(target=handle_chat, daemon=True).start()
+        else:
+            _waiting_for_combo = False
+
+    elif event.name not in ("ctrl", "shift", "alt", "left ctrl", "right ctrl"):
+        _waiting_for_combo = False
+
+# ── Handlers ──────────────────────────────────────────────────────────────────
+_last_ctrl_c_time = 0.0
+_waiting_for_combo = False
+
+def handle_translate():
+    time.sleep(0.05)
+    text = pyperclip.paste().strip()
+    if text:
+        result = translate(text)
+        show_translate_popup(text, result)
+
+def handle_chat():
+    time.sleep(0.05)
+    text = pyperclip.paste().strip()
+    if text:
+        show_chat_popup(text)
+
+keyboard.hook(on_key)
+
+# ── System tray ───────────────────────────────────────────────────────────────
+def make_icon():
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([4, 4, 60, 60], fill="#89b4fa")
+    d.text((18, 16), "Tr", fill="#1e1e2e")
+    return img
+
+def build_tray():
+    icon = pystray.Icon("QuickTranslator")
+    icon.icon = make_icon()
+    icon.title = "Quick Translator"
+    icon.menu = pystray.Menu(
+        pystray.MenuItem("Settings", lambda: threading.Thread(target=open_settings, daemon=True).start()),
+        pystray.MenuItem("Quit", lambda: (icon.stop(), os._exit(0))),
+    )
+    icon.run()
 
 # ── Settings window ───────────────────────────────────────────────────────────
 def open_settings() -> None:
@@ -342,7 +373,6 @@ def open_settings() -> None:
     win.resizable(False, False)
     win.configure(bg="#1e1e2e")
     win.attributes("-topmost", True)
-
     w, h = 420, 370
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
@@ -370,12 +400,10 @@ def open_settings() -> None:
         entries[0].config(show=new_show)
         show_btn.config(text="Hide" if new_show == "" else "Show")
 
-    show_btn = tk.Button(
-        win, text="Show", command=toggle_key,
-        bg="#313244", fg="#cdd6f4", font=("Segoe UI", 9),
-        relief="flat", padx=8, cursor="hand2",
-        activebackground="#45475a", activeforeground="#cdd6f4",
-    )
+    show_btn = tk.Button(win, text="Show", command=toggle_key,
+                         bg="#313244", fg="#cdd6f4", font=("Segoe UI", 9),
+                         relief="flat", padx=8, cursor="hand2",
+                         activebackground="#45475a", activeforeground="#cdd6f4")
     show_btn.place(x=w - 65, y=68)
 
     def save_and_close():
@@ -386,77 +414,12 @@ def open_settings() -> None:
         save_config(config)
         win.destroy()
 
-    tk.Button(
-        win, text="Save", command=save_and_close,
-        bg="#89b4fa", fg="#1e1e2e",
-        font=("Segoe UI", 10, "bold"),
-        relief="flat", padx=20, pady=6, cursor="hand2",
-        activebackground="#74c7ec", activeforeground="#1e1e2e",
-    ).pack(pady=20)
+    tk.Button(win, text="Save", command=save_and_close,
+              bg="#89b4fa", fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
+              relief="flat", padx=20, pady=6, cursor="hand2",
+              activebackground="#74c7ec", activeforeground="#1e1e2e").pack(pady=20)
 
     win.mainloop()
-
-# ── Hotkey engine ─────────────────────────────────────────────────────────────
-_last_ctrl_c_time = 0.0
-_waiting_for_combo = False
-
-def on_key(event):
-    global _last_ctrl_c_time, _waiting_for_combo
-    ctrl_held = keyboard.is_pressed("ctrl")
-    now = time.time()
-
-    if event.name == "c" and ctrl_held:
-        if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
-            _waiting_for_combo = False
-            threading.Thread(target=handle_translate, daemon=True).start()
-        else:
-            _last_ctrl_c_time = now
-            _waiting_for_combo = True
-
-    elif event.name == "space" and ctrl_held and _waiting_for_combo:
-        if now - _last_ctrl_c_time < 0.6:
-            _waiting_for_combo = False
-            threading.Thread(target=handle_chat, daemon=True).start()
-        else:
-            _waiting_for_combo = False
-
-    elif event.name not in ("ctrl", "shift", "alt", "left ctrl", "right ctrl"):
-        _waiting_for_combo = False
-
-def handle_translate():
-    time.sleep(0.05)
-    text = pyperclip.paste().strip()
-    if not text:
-        return
-    result = translate(text)
-    show_translate_popup(text, result)
-
-def handle_chat():
-    time.sleep(0.05)
-    text = pyperclip.paste().strip()
-    if not text:
-        return
-    show_chat_popup(text)
-
-keyboard.hook(on_key)
-
-# ── System tray ───────────────────────────────────────────────────────────────
-def make_icon():
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse([4, 4, 60, 60], fill="#89b4fa")
-    d.text((18, 16), "Tr", fill="#1e1e2e", font=None)
-    return img
-
-def build_tray():
-    icon = pystray.Icon("QuickTranslator")
-    icon.icon = make_icon()
-    icon.title = "Quick Translator"
-    icon.menu = pystray.Menu(
-        pystray.MenuItem("Settings", lambda: threading.Thread(target=open_settings, daemon=True).start()),
-        pystray.MenuItem("Quit", lambda: (icon.stop(), os._exit(0))),
-    )
-    icon.run()
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
