@@ -3,3 +3,4 @@ keyboard
 pyperclip
 pystray
 Pillow
+mistune
