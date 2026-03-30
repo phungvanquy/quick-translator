@@ -17,7 +17,6 @@ Fixes addressed
 import platform
 import threading
 import tkinter as tk
-from tkinter import font as tkfont
 
 import mistune  # pip install mistune
 
@@ -333,12 +332,6 @@ class ScrollableMessageFrame(tk.Frame):
         # insert or delete content, but let selection shortcuts through.
         # Using state="disabled" would block selection entirely, so we stay
         # in state="normal" and intercept keys instead.
-        _ALLOWED_KEY_PATTERNS = {
-            "<Control-a>", "<Control-A>",   # select all
-            "<Control-c>", "<Control-C>",   # copy
-            "<Control-Insert>",             # copy (alternate)
-            "<Shift-Insert>",               # paste — we block below anyway
-        }
         def _block_edits(event):
             # Allow copy / select-all / cursor movement / scrolling
             if event.state & 0x4:          # Ctrl held
@@ -400,18 +393,27 @@ def _force_focus(popup: tk.Toplevel, entry: tk.Entry | None = None):
 # ── Shared close-outside binding ─────────────────────────────────────────────
 
 def _bind_close_outside(popup: tk.Toplevel, close_fn):
+    """Close popup when clicking outside it. Cleans up on destroy."""
     def on_click_outside(e=None):
         try:
             if not popup.winfo_exists():
+                _unbind()
                 return
             px, py = popup.winfo_rootx(), popup.winfo_rooty()
             pw, ph = popup.winfo_width(), popup.winfo_height()
             mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
             if not (px <= mx <= px + pw and py <= my <= py + ph):
+                _unbind()
                 close_fn()
         except Exception:
             pass
     popup.bind_all("<Button-1>", on_click_outside, add=True)
+    def _unbind():
+        try:
+            popup.unbind_all("<Button-1>")
+        except Exception:
+            pass
+    popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
 
 # ── Chat popup (main entry point) ─────────────────────────────────────────────

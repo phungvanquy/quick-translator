@@ -38,8 +38,11 @@ _config: dict = {}
 
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return {**DEFAULT_CONFIG, **json.load(f)}
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return {**DEFAULT_CONFIG, **json.load(f)}
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass  # fall through to defaults
     save_config(DEFAULT_CONFIG)
     return DEFAULT_CONFIG.copy()
 
@@ -146,18 +149,27 @@ from constants import (
 
 # ── Translation popup ─────────────────────────────────────────────────────────
 def _bind_close_outside(popup, close_fn):
+    """Close popup when clicking outside it. Returns cleanup function."""
     def on_click_outside(e=None):
         try:
             if not popup.winfo_exists():
+                _unbind()
                 return
             px, py = popup.winfo_rootx(), popup.winfo_rooty()
             pw, ph = popup.winfo_width(), popup.winfo_height()
             mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
             if not (px <= mx <= px + pw and py <= my <= py + ph):
+                _unbind()
                 close_fn()
         except Exception:
             pass
-    popup.bind_all("<Button-1>", on_click_outside, add=True)
+    bind_id = popup.bind_all("<Button-1>", on_click_outside, add=True)
+    def _unbind():
+        try:
+            popup.unbind_all("<Button-1>")
+        except Exception:
+            pass
+    popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
 def show_translate_popup(original: str, translation: str) -> None:
     root = get_tk_root()
@@ -213,7 +225,6 @@ def show_translate_popup(original: str, translation: str) -> None:
     tk.Frame(popup, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
 
     # ── Translation result (selectable Text widget) ───────────────────────────
-    text_width_px = WIN_W - pad * 2
     trans_text = tk.Text(popup, bg=BG, fg=TEXT_C, font=("Segoe UI", 12),
                          wrap="word", relief="flat", bd=0, padx=pad, pady=8,
                          highlightthickness=0, cursor="xterm",
@@ -248,6 +259,16 @@ def show_translate_popup(original: str, translation: str) -> None:
     bottom.pack(fill="x", padx=pad, pady=(4, pad))
 
     def copy_translation():
+        # If user has selected text in the Text widget, copy that instead
+        try:
+            sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
+            if sel:
+                pyperclip.copy(sel)
+                copy_btn.config(text="✓ Copied", fg=GREEN)
+                popup.after(800, close)
+                return
+        except tk.TclError:
+            pass
         pyperclip.copy(translation)
         copy_btn.config(text="✓ Copied", fg=GREEN)
         popup.after(800, close)
@@ -270,7 +291,11 @@ def show_translate_popup(original: str, translation: str) -> None:
     popup.update_idletasks()
 
     # Count actual display lines (accounts for word wrap)
-    display_lines = int(trans_text.count("1.0", tk.END, "displaylines")[0])
+    try:
+        dl = trans_text.count("1.0", tk.END, "displaylines")
+        display_lines = int(dl[0]) if dl else 3
+    except (TypeError, IndexError, tk.TclError):
+        display_lines = max(3, int(trans_text.index(tk.END).split(".")[0]))
     trans_text.config(height=max(2, min(display_lines + 1, 15)))
 
     popup.update_idletasks()
