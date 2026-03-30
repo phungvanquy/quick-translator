@@ -1,6 +1,7 @@
 """
 Quick Translator - main.py
-Ctrl+C+C to translate selected text via OpenAI-compatible API.
+Ctrl+C+C  → translate selected text
+Ctrl+C+Space → chat about selected text
 Right-click tray icon to open Settings or quit.
 """
 
@@ -39,17 +40,21 @@ def save_config(cfg: dict) -> None:
 
 config = load_config()
 
+# ── OpenAI client helper ──────────────────────────────────────────────────────
+
+def get_client():
+    return OpenAI(
+        api_key=config["api_key"],
+        base_url=config["base_url"] or "https://api.openai.com/v1",
+    )
+
 # ── Translation ───────────────────────────────────────────────────────────────
 
 def translate(text: str) -> str:
     if not config["api_key"]:
         return "⚠ No API key set.\nRight-click the tray icon → Settings."
     try:
-        client = OpenAI(
-            api_key=config["api_key"],
-            base_url=config["base_url"] or "https://api.openai.com/v1",
-        )
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=config["model"],
             messages=[
                 {
@@ -68,58 +73,97 @@ def translate(text: str) -> str:
     except Exception as e:
         return f"⚠ Error: {e}"
 
-# ── Popup window ──────────────────────────────────────────────────────────────
+# ── Chat (single turn with context) ──────────────────────────────────────────
 
-def show_popup(original: str, translation: str) -> None:
+def chat_with_context(selected_text: str, user_question: str, history: list) -> str:
+    if not config["api_key"]:
+        return "⚠ No API key set.\nRight-click the tray icon → Settings."
+    try:
+        system = (
+            "You are a helpful assistant. The user has selected the following text:\n\n"
+            f"---\n{selected_text}\n---\n\n"
+            "Answer the user's questions about it concisely and clearly."
+        )
+        messages = [{"role": "system", "content": system}] + history + [
+            {"role": "user", "content": user_question}
+        ]
+        response = get_client().chat.completions.create(
+            model=config["model"],
+            messages=messages,
+            max_tokens=1000,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠ Error: {e}"
+
+# ── Shared popup close helper ─────────────────────────────────────────────────
+
+def bind_close_outside(popup, close_fn):
+    """Close popup when user clicks outside it."""
+    def on_click_outside(e=None):
+        try:
+            px, py = popup.winfo_rootx(), popup.winfo_rooty()
+            pw, ph = popup.winfo_width(), popup.winfo_height()
+            mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
+            if not (px <= mx <= px + pw and py <= my <= py + ph):
+                close_fn()
+        except Exception:
+            pass
+    popup.bind_all("<Button-1>", on_click_outside)
+
+def position_popup(popup):
+    """Move popup near cursor, keeping it on screen."""
+    popup.update_idletasks()
+    x = popup.winfo_pointerx() + 16
+    y = popup.winfo_pointery() + 16
+    pw, ph = popup.winfo_width(), popup.winfo_height()
+    sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
+    if x + pw > sw: x = sw - pw - 10
+    if y + ph > sh: y = sh - ph - 10
+    popup.geometry(f"+{x}+{y}")
+
+# ── Translation popup ─────────────────────────────────────────────────────────
+
+def show_translate_popup(original: str, translation: str) -> None:
     popup = tk.Tk()
     popup.overrideredirect(True)
     popup.attributes("-topmost", True)
     popup.attributes("-alpha", 0.97)
     popup.configure(bg="#1e1e2e")
-
-    x = popup.winfo_pointerx() + 16
-    y = popup.winfo_pointery() + 16
-    popup.geometry(f"+{x}+{y}")
+    popup.geometry("+0+0")
     pad = 14
 
     def close(e=None):
-        try:
-            popup.destroy()
-        except Exception:
-            pass
+        try: popup.destroy()
+        except Exception: pass
 
-    # Top bar: language badge + X button
+    # Top bar
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
-
     tk.Label(
         top, text=f"→ {config['target_language']}",
         bg="#313244", fg="#cdd6f4",
         font=("Segoe UI", 9), padx=8, pady=3,
     ).pack(side="left")
-
     tk.Button(
         top, text="✕", command=close,
-        bg="#1e1e2e", fg="#6c7086",
-        font=("Segoe UI", 10), relief="flat",
-        padx=4, pady=0, cursor="hand2",
+        bg="#1e1e2e", fg="#6c7086", font=("Segoe UI", 10),
+        relief="flat", padx=4, pady=0, cursor="hand2",
         activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
     ).pack(side="right")
 
-    # Original text (truncated)
+    # Original (truncated)
     orig_short = original if len(original) < 80 else original[:77] + "…"
     tk.Label(
-        popup, text=orig_short,
-        bg="#1e1e2e", fg="#6c7086",
+        popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
         font=("Segoe UI", 9), wraplength=380, justify="left",
     ).pack(anchor="w", padx=pad, pady=(0, 6))
 
     tk.Frame(popup, bg="#313244", height=1).pack(fill="x", padx=pad)
 
-    # Translation text
+    # Translation
     tk.Label(
-        popup, text=translation,
-        bg="#1e1e2e", fg="#cdd6f4",
+        popup, text=translation, bg="#1e1e2e", fg="#cdd6f4",
         font=("Segoe UI", 12), wraplength=380, justify="left",
     ).pack(anchor="w", padx=pad, pady=(8, 4))
 
@@ -131,38 +175,130 @@ def show_popup(original: str, translation: str) -> None:
 
     copy_btn = tk.Button(
         popup, text="Copy", command=copy_translation,
-        bg="#313244", fg="#cdd6f4",
-        font=("Segoe UI", 9), relief="flat", padx=10, pady=4,
-        cursor="hand2",
+        bg="#313244", fg="#cdd6f4", font=("Segoe UI", 9),
+        relief="flat", padx=10, pady=4, cursor="hand2",
         activebackground="#45475a", activeforeground="#cdd6f4",
     )
     copy_btn.pack(anchor="e", padx=pad, pady=(4, pad))
 
-    # Close on Escape
+    popup.bind("<Escape>", close)
+    bind_close_outside(popup, close)
+    position_popup(popup)
+    popup.focus_force()
+    popup.mainloop()
+
+# ── Chat popup ────────────────────────────────────────────────────────────────
+
+def show_chat_popup(selected_text: str) -> None:
+    popup = tk.Tk()
+    popup.overrideredirect(True)
+    popup.attributes("-topmost", True)
+    popup.attributes("-alpha", 0.97)
+    popup.configure(bg="#1e1e2e")
+    popup.geometry("+0+0")
+    pad = 14
+    chat_history = []   # list of {"role": ..., "content": ...}
+
+    def close(e=None):
+        try: popup.destroy()
+        except Exception: pass
+
+    # ── Top bar ───────────────────────────────────────────────────────────────
+    top = tk.Frame(popup, bg="#1e1e2e")
+    top.pack(fill="x", padx=pad, pady=(pad, 4))
+
+    tk.Label(
+        top, text="💬 Chat",
+        bg="#313244", fg="#cdd6f4",
+        font=("Segoe UI", 9), padx=8, pady=3,
+    ).pack(side="left")
+    tk.Button(
+        top, text="✕", command=close,
+        bg="#1e1e2e", fg="#6c7086", font=("Segoe UI", 10),
+        relief="flat", padx=4, pady=0, cursor="hand2",
+        activebackground="#1e1e2e", activeforeground="#cdd6f4", bd=0,
+    ).pack(side="right")
+
+    # ── Selected text preview ─────────────────────────────────────────────────
+    orig_short = selected_text if len(selected_text) < 80 else selected_text[:77] + "…"
+    tk.Label(
+        popup, text=orig_short, bg="#1e1e2e", fg="#6c7086",
+        font=("Segoe UI", 9), wraplength=400, justify="left",
+    ).pack(anchor="w", padx=pad, pady=(0, 6))
+
+    tk.Frame(popup, bg="#313244", height=1).pack(fill="x", padx=pad)
+
+    # ── Chat history display ──────────────────────────────────────────────────
+    history_frame = tk.Frame(popup, bg="#1e1e2e")
+    history_frame.pack(fill="both", padx=pad, pady=(8, 4))
+
+    def add_message(role: str, text: str):
+        """Append a message bubble to the chat history frame."""
+        is_user = role == "user"
+        bubble_bg  = "#313244" if is_user else "#1e1e2e"
+        bubble_fg  = "#89b4fa" if is_user else "#cdd6f4"
+        prefix     = "You: " if is_user else "AI: "
+        anchor     = "e" if is_user else "w"
+
+        row_frame = tk.Frame(history_frame, bg="#1e1e2e")
+        row_frame.pack(fill="x", pady=2, anchor=anchor)
+
+        tk.Label(
+            row_frame,
+            text=prefix + text,
+            bg=bubble_bg, fg=bubble_fg,
+            font=("Segoe UI", 10),
+            wraplength=360, justify="left",
+            padx=8, pady=4,
+        ).pack(anchor=anchor)
+
+    # ── Input row ─────────────────────────────────────────────────────────────
+    input_frame = tk.Frame(popup, bg="#1e1e2e")
+    input_frame.pack(fill="x", padx=pad, pady=(4, pad))
+
+    input_var = tk.StringVar()
+    input_entry = tk.Entry(
+        input_frame, textvariable=input_var,
+        bg="#313244", fg="#cdd6f4",
+        insertbackground="#cdd6f4",
+        font=("Segoe UI", 10), relief="flat",
+        width=36,
+    )
+    input_entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 6))
+
+    def send(e=None):
+        question = input_var.get().strip()
+        if not question:
+            return
+        input_var.set("")
+        send_btn.config(state="disabled", text="…")
+        add_message("user", question)
+        popup.update()
+
+        def do_chat():
+            reply = chat_with_context(selected_text, question, chat_history)
+            chat_history.append({"role": "user",      "content": question})
+            chat_history.append({"role": "assistant", "content": reply})
+            popup.after(0, lambda: add_message("assistant", reply))
+            popup.after(0, lambda: send_btn.config(state="normal", text="Send"))
+            popup.after(0, lambda: popup.update_idletasks())
+
+        threading.Thread(target=do_chat, daemon=True).start()
+
+    send_btn = tk.Button(
+        input_frame, text="Send", command=send,
+        bg="#89b4fa", fg="#1e1e2e",
+        font=("Segoe UI", 9, "bold"),
+        relief="flat", padx=10, pady=6, cursor="hand2",
+        activebackground="#74c7ec", activeforeground="#1e1e2e",
+    )
+    send_btn.pack(side="right")
+
+    input_entry.bind("<Return>", send)
     popup.bind("<Escape>", close)
 
-    # Close on click outside popup
-    def on_click_outside(e=None):
-        try:
-            px, py = popup.winfo_rootx(), popup.winfo_rooty()
-            pw, ph = popup.winfo_width(), popup.winfo_height()
-            mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
-            if not (px <= mx <= px + pw and py <= my <= py + ph):
-                close()
-        except Exception:
-            pass
-
-    popup.bind_all("<Button-1>", on_click_outside)
-
-    # Keep popup on screen
-    popup.update_idletasks()
-    pw, ph = popup.winfo_width(), popup.winfo_height()
-    sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
-    if x + pw > sw: x = sw - pw - 10
-    if y + ph > sh: y = sh - ph - 10
-    popup.geometry(f"+{x}+{y}")
-
-    popup.focus_force()
+    position_popup(popup)
+    input_entry.focus_force()
     popup.mainloop()
 
 # ── Settings window ───────────────────────────────────────────────────────────
@@ -194,7 +330,6 @@ def open_settings() -> None:
     model_var = row("Model",           config["model"])
     lang_var  = row("Target Language", config["target_language"])
 
-    # Show/hide API key toggle
     def toggle_key():
         entries = [c for c in win.winfo_children() if isinstance(c, ttk.Entry)]
         cur = entries[0].cget("show")
@@ -227,18 +362,43 @@ def open_settings() -> None:
 
     win.mainloop()
 
-# ── Hotkey: Ctrl+C+C ──────────────────────────────────────────────────────────
+# ── Hotkey engine ─────────────────────────────────────────────────────────────
+#
+#  State machine tracks the last key pressed after Ctrl+C so we can detect:
+#    Ctrl+C  →  Ctrl+C        = translate   (Ctrl+C+C)
+#    Ctrl+C  →  Space         = chat        (Ctrl+C+Space)
 
-_last_ctrl_c = 0.0
+_last_ctrl_c_time = 0.0
+_waiting_for_combo = False   # True after first Ctrl+C, waiting for C or Space
 
-def on_ctrl_c(event):
-    global _last_ctrl_c
+def on_key(event):
+    global _last_ctrl_c_time, _waiting_for_combo
+
+    ctrl_held = keyboard.is_pressed("ctrl")
     now = time.time()
-    if now - _last_ctrl_c < 0.5:
-        _last_ctrl_c = 0.0
-        threading.Thread(target=handle_translate, daemon=True).start()
+
+    if event.name == "c" and ctrl_held:
+        if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
+            # Second key is C → translate
+            _waiting_for_combo = False
+            threading.Thread(target=handle_translate, daemon=True).start()
+        else:
+            # First Ctrl+C — start waiting
+            _last_ctrl_c_time = now
+            _waiting_for_combo = True
+
+    elif event.name == "space" and ctrl_held and _waiting_for_combo:
+        if now - _last_ctrl_c_time < 0.6:
+            # Ctrl+C then Space → chat
+            _waiting_for_combo = False
+            threading.Thread(target=handle_chat, daemon=True).start()
+        else:
+            _waiting_for_combo = False
+
     else:
-        _last_ctrl_c = now
+        # Any other key resets the combo (but only if not a modifier key)
+        if event.name not in ("ctrl", "shift", "alt", "left ctrl", "right ctrl"):
+            _waiting_for_combo = False
 
 def handle_translate():
     time.sleep(0.05)
@@ -246,9 +406,16 @@ def handle_translate():
     if not text:
         return
     result = translate(text)
-    show_popup(text, result)
+    show_translate_popup(text, result)
 
-keyboard.on_press_key("c", on_ctrl_c, suppress=False)
+def handle_chat():
+    time.sleep(0.05)
+    text = pyperclip.paste().strip()
+    if not text:
+        return
+    show_chat_popup(text)
+
+keyboard.hook(on_key)
 
 # ── System tray ───────────────────────────────────────────────────────────────
 
@@ -272,7 +439,10 @@ def build_tray():
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Quick Translator running. Ctrl+C+C to translate. Right-click tray to configure.")
+    print("Quick Translator running.")
+    print("  Ctrl+C+C     → translate selected text")
+    print("  Ctrl+C+Space → chat about selected text")
+    print("Right-click tray icon to configure or quit.")
     if not config["api_key"]:
         threading.Thread(target=open_settings, daemon=True).start()
     build_tray()
