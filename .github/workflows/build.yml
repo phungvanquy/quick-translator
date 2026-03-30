@@ -22,11 +22,21 @@ jobs:
         run: pip install openai keyboard pyperclip pystray Pillow pyinstaller mistune
 
       - name: Build EXE
-        run: pyinstaller --onefile --noconsole --name QuickTranslator main.py
+        run: pyinstaller --onefile --noconsole --uac-admin --name QuickTranslator main.py
+
+      - name: Build Installer
+        run: iscc installer.iss
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuickTranslator-Windows
           path: dist/QuickTranslator.exe
+          retention-days: 30
+
+      - name: Upload Installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickTranslator-Setup
+          path: installer_output/QuickTranslator-Setup.exe
           retention-days: 30
