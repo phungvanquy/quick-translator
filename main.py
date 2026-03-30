@@ -17,6 +17,8 @@ from openai import OpenAI
 import pystray
 from PIL import Image, ImageDraw
 
+import sys
+
 from chat_popup import show_chat_popup as _show_chat_popup, _configure_tags, render_markdown_to_text
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -417,11 +419,27 @@ def handle_chat():
         tk_call(lambda: show_chat_popup(text))
 
 # ── System tray ───────────────────────────────────────────────────────────────
+def _app_path(filename: str) -> str:
+    """Resolve a file path that works both from source and PyInstaller bundle."""
+    if getattr(sys, "_MEIPASS", None):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
 def make_icon():
+    # Try to load the proper icon file
+    ico_path = _app_path("icon.ico")
+    png_path = _app_path("icon.png")
+    for path in (ico_path, png_path):
+        if os.path.exists(path):
+            try:
+                return Image.open(path)
+            except Exception:
+                pass
+    # Fallback: generate a simple icon in memory
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.ellipse([4, 4, 60, 60], fill=BLUE)
-    d.text((18, 16), "Tr", fill=BG)
+    d.text((18, 16), "Qt", fill=BG)
     return img
 
 def build_tray():

@@ -25,10 +25,13 @@ jobs:
         run: >
           pyinstaller --onefile --noconsole --uac-admin
           --name QuickTranslator
+          --icon icon.ico
           --hidden-import pystray._win32
           --hidden-import mistune
           --add-data "constants.py;."
           --add-data "chat_popup.py;."
+          --add-data "icon.ico;."
+          --add-data "icon.png;."
           main.py
 
       - name: Build Installer
