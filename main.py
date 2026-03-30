@@ -9,6 +9,7 @@ import threading
 import time
 import json
 import os
+import ctypes
 import tkinter as tk
 from tkinter import ttk
 import pyperclip
@@ -30,6 +31,8 @@ def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return {**DEFAULT_CONFIG, **json.load(f)}
+    # First run — write defaults so the file always exists
+    save_config(DEFAULT_CONFIG)
     return DEFAULT_CONFIG.copy()
 
 def save_config(cfg: dict) -> None:
@@ -75,7 +78,7 @@ def translate(text: str) -> str:
     except Exception as e:
         return f"⚠ Error: {e}"
 
-# ── Chat (single turn with context) ──────────────────────────────────────────
+# ── Chat (multi-turn with context) ────────────────────────────────────────────
 def chat_with_context(selected_text: str, user_question: str, history: list) -> str:
     if not config["api_key"]:
         return "⚠ No API key set.\nRight-click the tray icon → Settings."
@@ -137,6 +140,20 @@ def position_popup(popup):
     if x + pw > sw: x = sw - pw - 10
     if y + ph > sh: y = sh - ph - 10
     popup.geometry(f"+{x}+{y}")
+
+def force_window_focus(popup, entry=None):
+    """Force OS-level focus using ctypes — works even from hotkey threads."""
+    try:
+        popup.lift()
+        popup.focus_force()
+        if entry:
+            entry.focus_force()
+            entry.icursor(tk.END)
+        # Tell Windows directly to give this window foreground focus
+        hwnd = ctypes.windll.user32.GetParent(popup.winfo_id())
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
 
 # ── Translation popup ─────────────────────────────────────────────────────────
 def show_translate_popup(original: str, translation: str) -> None:
@@ -268,25 +285,15 @@ def show_chat_popup(selected_text: str) -> None:
     send_btn.pack(side="right")
 
     input_entry.bind("<Return>", send)
-
     popup.bind("<Escape>", close)
     bind_close_outside(popup, close)
     make_draggable(popup)
     position_popup(popup)
 
-    popup.grab_set()
-    popup.lift()
-
-    def force_focus():
-        popup.focus_force()
-        input_entry.focus_force()
-        input_entry.icursor(tk.END)
-        input_entry.select_range(0, tk.END)
-
-    popup.after(0, force_focus)
-    popup.after(30, force_focus)
-    popup.after(80, force_focus)
-    popup.after(150, force_focus)
+    # Force OS-level focus with retries — needed for hotkey-triggered windows
+    popup.after(100, lambda: force_window_focus(popup, input_entry))
+    popup.after(250, lambda: force_window_focus(popup, input_entry))
+    popup.after(450, lambda: force_window_focus(popup, input_entry))
 
     popup.mainloop()
 
