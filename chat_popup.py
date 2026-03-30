@@ -458,6 +458,7 @@ def show_chat_popup(
     popup.geometry(f"{WIN_W}x{WIN_H}+{cx}+{cy}")
 
     chat_history: list[dict] = []
+    _ctx = {"text": selected_text}  # mutable context; cleared = free chat
 
     def close(e=None):
         try:
@@ -480,9 +481,9 @@ def show_chat_popup(
     header.grid_propagate(False)
     header.grid_columnconfigure(0, weight=1)
 
-    tk.Label(header, text="💬  Chat", bg=SURFACE, fg=TEXT,
-             font=("Segoe UI", 9, "bold"), padx=12).grid(
-                 row=0, column=0, sticky="w", pady=8)
+    header_label = tk.Label(header, text="💬  Chat", bg=SURFACE, fg=TEXT,
+             font=("Segoe UI", 9, "bold"), padx=12)
+    header_label.grid(row=0, column=0, sticky="w", pady=8)
 
     close_btn = tk.Button(header, text="✕", command=close,
               bg=SURFACE, fg=MUTED, font=FONT_SM,
@@ -514,18 +515,35 @@ def show_chat_popup(
         widget.bind("<ButtonRelease-1>", _header_release, add=True)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # ROW 1 — Context strip (selected text preview)
+    # ROW 1 — Context strip (selected text preview, clearable)
     # ─────────────────────────────────────────────────────────────────────────
     ctx_frame = tk.Frame(popup, bg=BG)
     ctx_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(8, 0))
+    ctx_frame.grid_columnconfigure(0, weight=1)
 
     orig_short = selected_text if len(selected_text) < 90 else selected_text[:87] + "…"
-    tk.Label(ctx_frame, text=orig_short, bg=BG, fg=MUTED,
-             font=("Segoe UI", 8), wraplength=440, justify="left",
-             anchor="w").pack(fill="x")
+    ctx_label = tk.Label(ctx_frame, text=orig_short, bg=BG, fg=MUTED,
+             font=("Segoe UI", 8), wraplength=400, justify="left",
+             anchor="w")
+    ctx_label.grid(row=0, column=0, sticky="ew")
 
-    tk.Frame(popup, bg=SURFACE, height=1).grid(
-        row=1, column=0, sticky="ew", padx=12, pady=(6, 0))
+    def clear_context():
+        _ctx["text"] = ""
+        chat_history.clear()
+        ctx_frame.grid_forget()
+        ctx_sep.grid_forget()
+        header_label.config(text="💬  Free Chat")
+
+    clear_ctx_btn = tk.Button(ctx_frame, text="✕", command=clear_context,
+                              bg=BG, fg=MUTED, font=FONT_XS,
+                              relief="flat", padx=4, pady=0, bd=0,
+                              cursor="hand2", activebackground=BG,
+                              activeforeground=RED)
+    clear_ctx_btn.grid(row=0, column=1, sticky="ne", padx=(4, 0))
+    bind_hover(clear_ctx_btn, BG, BG, RED, MUTED)
+
+    ctx_sep = tk.Frame(popup, bg=SURFACE, height=1)
+    ctx_sep.grid(row=1, column=0, sticky="ew", padx=12, pady=(6, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
     # ROW 2 — Scrollable message area
@@ -595,7 +613,7 @@ def show_chat_popup(
         msg_area.add_message("user", question)
 
         def do_chat():
-            reply = chat_with_context(selected_text, question, chat_history)
+            reply = chat_with_context(_ctx["text"], question, chat_history)
             chat_history.append({"role": "user",      "content": question})
             chat_history.append({"role": "assistant", "content": reply})
             if popup.winfo_exists():

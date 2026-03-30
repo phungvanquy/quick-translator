@@ -95,13 +95,20 @@ def chat_with_context(selected_text: str, user_question: str, history: list) -> 
     if not cfg["api_key"]:
         return "⚠ No API key set.\nRight-click the tray icon → Settings."
     try:
-        system = (
-            "You are a helpful assistant. The user has selected the following text:\n\n"
-            f"---\n{selected_text}\n---\n\n"
-            "Answer the user's questions about it concisely and clearly. "
-            "You may use Markdown formatting (bold, italic, code blocks, lists) "
-            "where it helps readability."
-        )
+        if selected_text:
+            system = (
+                "You are a helpful assistant. The user has selected the following text:\n\n"
+                f"---\n{selected_text}\n---\n\n"
+                "Answer the user's questions about it concisely and clearly. "
+                "You may use Markdown formatting (bold, italic, code blocks, lists) "
+                "where it helps readability."
+            )
+        else:
+            system = (
+                "You are a helpful assistant. Answer concisely and clearly. "
+                "You may use Markdown formatting (bold, italic, code blocks, lists) "
+                "where it helps readability."
+            )
         messages = [{"role": "system", "content": system}] + history + [
             {"role": "user", "content": user_question}
         ]
