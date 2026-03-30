@@ -22,10 +22,12 @@ from tkinter import font as tkfont
 import mistune  # pip install mistune
 
 from constants import (
-    BG, SURFACE, OVERLAY, MUTED, TEXT_C as TEXT, BLUE, CYAN, GREEN, YELLOW,
-    MAUVE, CODE_BG, CODE_FG, SCROLLBAR,
+    BG, SURFACE, SURFACE1, OVERLAY, MUTED, SUBTEXT, TEXT_C as TEXT,
+    BLUE, CYAN, GREEN, YELLOW, RED,
+    MAUVE, CODE_BG, CODE_FG, SCROLLBAR, SAPPHIRE,
     FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO,
-    FONT_H1, FONT_H2, FONT_H3, WRAP_WIDTH,
+    FONT_H1, FONT_H2, FONT_H3, FONT_SM, FONT_XS, WRAP_WIDTH,
+    bind_hover,
 )
 
 # ── Markdown → tk.Text renderer ───────────────────────────────────────────────
@@ -480,11 +482,13 @@ def show_chat_popup(
              font=("Segoe UI", 9, "bold"), padx=12).grid(
                  row=0, column=0, sticky="w", pady=8)
 
-    tk.Button(header, text="✕", command=close,
-              bg=SURFACE, fg=MUTED, font=("Segoe UI", 10),
+    close_btn = tk.Button(header, text="✕", command=close,
+              bg=SURFACE, fg=MUTED, font=FONT_SM,
               relief="flat", padx=8, pady=0, bd=0,
-              cursor="hand2", activebackground=SURFACE,
-              activeforeground=TEXT).grid(row=0, column=1, sticky="e", padx=4)
+              cursor="hand2", activebackground=RED,
+              activeforeground=TEXT)
+    close_btn.grid(row=0, column=1, sticky="e", padx=4)
+    bind_hover(close_btn, RED, SURFACE, TEXT, MUTED)
 
     # Drag state — attached only to the header
     _drag = {"x": 0, "y": 0, "active": False}
@@ -548,12 +552,13 @@ def show_chat_popup(
                      padx=(12, 6), pady=10, ipady=6)
 
     send_btn = tk.Button(
-        input_frame, text="Send",
+        input_frame, text="Send ⏎",
         bg=BLUE, fg=BG, font=("Segoe UI", 9, "bold"),
         relief="flat", padx=12, pady=6, cursor="hand2",
-        activebackground=CYAN, activeforeground=BG,
+        activebackground=SAPPHIRE, activeforeground=BG, bd=0,
     )
     send_btn.grid(row=1, column=1, sticky="e", padx=(0, 12), pady=10)
+    bind_hover(send_btn, SAPPHIRE, BLUE)
 
     # ── Resize grip (bottom-right corner) ────────────────────────────────────
     grip = tk.Label(popup, text="⠿", bg=BG, fg=MUTED,
@@ -584,7 +589,7 @@ def show_chat_popup(
         if not question:
             return
         input_var.set("")
-        send_btn.config(state="disabled", text="…")
+        send_btn.config(state="disabled", text="⏳", bg=MUTED)
         msg_area.add_message("user", question)
 
         def do_chat():
@@ -593,7 +598,8 @@ def show_chat_popup(
             chat_history.append({"role": "assistant", "content": reply})
             if popup.winfo_exists():
                 popup.after(0, lambda: msg_area.add_message("assistant", reply))
-                popup.after(0, lambda: send_btn.config(state="normal", text="Send"))
+                popup.after(0, lambda: send_btn.config(
+                    state="normal", text="Send ⏎", bg=BLUE))
 
         threading.Thread(target=do_chat, daemon=True).start()
 
