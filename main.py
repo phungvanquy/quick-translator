@@ -70,32 +70,40 @@ def get_client(cfg: dict) -> OpenAI:
         base_url=cfg["base_url"] or "https://api.openai.com/v1",
     )
 
-def translate(text: str) -> str:
+def translate_stream(text: str):
+    """Yield translation chunks. Yields strings; first may be an error."""
     cfg = get_config()
     if not cfg["api_key"]:
-        return "⚠ No API key set.\nRight-click the tray icon → Settings."
+        yield "⚠ No API key set.\nRight-click the tray icon → Settings."
+        return
     try:
         prompt = cfg.get("custom_prompt", DEFAULT_PROMPT)
         try:
             system_content = prompt.format(target_language=cfg["target_language"])
         except (KeyError, ValueError):
             system_content = prompt
-        response = get_client(cfg).chat.completions.create(
+        stream = get_client(cfg).chat.completions.create(
             model=cfg["model"],
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": text},
             ],
-            max_tokens=1000,
+            max_completion_tokens=1000,
+            stream=True,
         )
-        return response.choices[0].message.content.strip()
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
     except Exception as e:
-        return f"⚠ Error: {e}"
+        yield f"⚠ Error: {e}"
 
-def chat_with_context(selected_text: str, user_question: str, history: list) -> str:
+def chat_with_context_stream(selected_text: str, user_question: str, history: list):
+    """Yield chat response chunks as strings."""
     cfg = get_config()
     if not cfg["api_key"]:
-        return "⚠ No API key set.\nRight-click the tray icon → Settings."
+        yield "⚠ No API key set.\nRight-click the tray icon → Settings."
+        return
     try:
         if selected_text:
             system = (
@@ -114,14 +122,18 @@ def chat_with_context(selected_text: str, user_question: str, history: list) -> 
         messages = [{"role": "system", "content": system}] + history + [
             {"role": "user", "content": user_question}
         ]
-        response = get_client(cfg).chat.completions.create(
+        stream = get_client(cfg).chat.completions.create(
             model=cfg["model"],
             messages=messages,
-            max_tokens=1000,
+            max_completion_tokens=1000,
+            stream=True,
         )
-        return response.choices[0].message.content.strip()
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
     except Exception as e:
-        return f"⚠ Error: {e}"
+        yield f"⚠ Error: {e}"
 
 # ── Clipboard helper ──────────────────────────────────────────────────────────
 def get_clipboard_after_copy(retries: int = 10, interval: float = 0.05) -> str:
@@ -180,7 +192,8 @@ def _bind_close_outside(popup, close_fn):
             pass
     popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
-def show_translate_popup(original: str, translation: str) -> None:
+def show_translate_popup(original: str, stream_gen) -> None:
+    """Show translation popup with streaming. stream_gen is a generator yielding chunks."""
     root = get_tk_root()
     popup = tk.Toplevel(root)
     popup.overrideredirect(True)
@@ -239,14 +252,9 @@ def show_translate_popup(original: str, translation: str) -> None:
                          highlightthickness=0, cursor="xterm",
                          selectbackground=OVERLAY, selectforeground=TEXT_C,
                          inactiveselectbackground=OVERLAY,
-                         height=1)
+                         height=2)
     _configure_tags(trans_text)
-    render_markdown_to_text(trans_text, translation)
-    # Strip trailing blank lines
-    content = trans_text.get("1.0", tk.END)
-    stripped = content.rstrip("\n")
-    if len(stripped) < len(content) - 1:
-        trans_text.delete(f"1.0 + {len(stripped)}c", tk.END)
+    trans_text.insert(tk.END, "⏳", "normal")
     trans_text.config(state="normal")
     trans_text.pack(anchor="w", fill="x", padx=0, pady=(4, 0))
 
@@ -267,8 +275,9 @@ def show_translate_popup(original: str, translation: str) -> None:
     bottom = tk.Frame(popup, bg=BG)
     bottom.pack(fill="x", padx=pad, pady=(4, pad))
 
+    _full_text = {"value": ""}
+
     def copy_translation():
-        # If user has selected text in the Text widget, copy that instead
         try:
             sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
             if sel:
@@ -278,7 +287,7 @@ def show_translate_popup(original: str, translation: str) -> None:
                 return
         except tk.TclError:
             pass
-        pyperclip.copy(translation)
+        pyperclip.copy(_full_text["value"])
         copy_btn.config(text="✓ Copied", fg=GREEN)
         popup.after(800, close)
 
@@ -293,40 +302,81 @@ def show_translate_popup(original: str, translation: str) -> None:
     popup.bind("<Control-c>", lambda e: copy_translation())
     _bind_close_outside(popup, close)
 
-    # ── Size & position ──────────────────────────────────────────────────────
-    # Force fixed width, then compute display lines for proper height
+    # ── Size & position (initial) ────────────────────────────────────────────
     popup.update_idletasks()
-    popup.geometry(f"{WIN_W}x1")
-    popup.update_idletasks()
-
-    # Count actual display lines (accounts for word wrap)
-    try:
-        dl = trans_text.count("1.0", tk.END, "displaylines")
-        display_lines = int(dl[0]) if dl else 3
-    except (TypeError, IndexError, tk.TclError):
-        display_lines = max(3, int(trans_text.index(tk.END).split(".")[0]))
-    trans_text.config(height=max(2, min(display_lines + 1, 15)))
-
-    popup.update_idletasks()
-    ph = popup.winfo_reqheight()
-    # Clamp total popup height
-    MIN_H, MAX_H = 120, 500
-    ph = max(MIN_H, min(ph, MAX_H))
-
     x = popup.winfo_pointerx() + 16
     y = popup.winfo_pointery() + 16
     sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
     if x + WIN_W > sw: x = sw - WIN_W - 10
-    if y + ph > sh: y = sh - ph - 10
-    popup.geometry(f"{WIN_W}x{ph}+{x}+{y}")
+    if y + 200 > sh: y = sh - 200 - 10
+    popup.geometry(f"{WIN_W}x200+{x}+{y}")
     popup.focus_force()
+
+    # ── Resize helper ────────────────────────────────────────────────────────
+    _pos = {"x": x, "y": y}
+
+    def _resize_popup():
+        if not popup.winfo_exists():
+            return
+        popup.update_idletasks()
+        try:
+            dl = trans_text.count("1.0", tk.END, "displaylines")
+            display_lines = int(dl[0]) if dl else 3
+        except (TypeError, IndexError, tk.TclError):
+            display_lines = max(3, int(trans_text.index(tk.END).split(".")[0]))
+        trans_text.config(height=max(2, min(display_lines + 1, 15)))
+        popup.update_idletasks()
+        ph = popup.winfo_reqheight()
+        MIN_H, MAX_H = 120, 500
+        ph = max(MIN_H, min(ph, MAX_H))
+        popup.geometry(f"{WIN_W}x{ph}+{_pos['x']}+{_pos['y']}")
+
+    # ── Stream chunks from background thread ─────────────────────────────────
+    _stream_started = {"v": False}
+
+    def _append_chunk(chunk):
+        if not popup.winfo_exists():
+            return
+        if not _stream_started["v"]:
+            trans_text.delete("1.0", tk.END)
+            _stream_started["v"] = True
+        trans_text.insert(tk.END, chunk, "normal")
+        _full_text["value"] += chunk
+        _resize_popup()
+
+    def _stream_done():
+        if not popup.winfo_exists():
+            return
+        # Re-render with markdown formatting
+        full = _full_text["value"].strip()
+        trans_text.delete("1.0", tk.END)
+        render_markdown_to_text(trans_text, full)
+        # Strip trailing blank lines
+        content = trans_text.get("1.0", tk.END)
+        stripped = content.rstrip("\n")
+        if len(stripped) < len(content) - 1:
+            trans_text.delete(f"1.0 + {len(stripped)}c", tk.END)
+        _full_text["value"] = full
+        _resize_popup()
+
+    def _do_stream():
+        try:
+            for chunk in stream_gen:
+                if not popup.winfo_exists():
+                    return
+                popup.after(0, lambda c=chunk: _append_chunk(c))
+        finally:
+            if popup.winfo_exists():
+                popup.after(0, _stream_done)
+
+    threading.Thread(target=_do_stream, daemon=True).start()
 
 # ── Chat popup (delegates to chat_popup.py) ───────────────────────────────────
 def show_chat_popup(selected_text: str) -> None:
     _show_chat_popup(
         selected_text,
         get_tk_root=get_tk_root,
-        chat_with_context=chat_with_context,
+        chat_with_context_stream=chat_with_context_stream,
         get_config=get_config,
     )
 
@@ -381,37 +431,12 @@ def on_press(event):
 keyboard.on_press(on_press)
 
 # ── Handlers ──────────────────────────────────────────────────────────────
-_loading_popup = None
-
-def _show_loading():
-    global _loading_popup
-    root = get_tk_root()
-    popup = tk.Toplevel(root)
-    popup.overrideredirect(True)
-    popup.attributes("-topmost", True)
-    popup.attributes("-alpha", 0.95)
-    popup.configure(bg=SURFACE)
-    tk.Label(popup, text="⏳ Translating…", bg=SURFACE, fg=SUBTEXT,
-             font=FONT_SM, padx=16, pady=10).pack()
-    popup.update_idletasks()
-    x = popup.winfo_pointerx() + 16
-    y = popup.winfo_pointery() + 16
-    popup.geometry(f"+{x}+{y}")
-    _loading_popup = popup
-
-def _dismiss_loading():
-    global _loading_popup
-    if _loading_popup:
-        try: _loading_popup.destroy()
-        except Exception: pass
-        _loading_popup = None
 
 def handle_translate():
     text = get_clipboard_after_copy()
     if text:
-        tk_call(_show_loading)
-        result = translate(text)
-        tk_call(lambda: (_dismiss_loading(), show_translate_popup(text, result)))
+        stream = translate_stream(text)
+        tk_call(lambda: show_translate_popup(text, stream))
 
 def handle_chat():
     text = get_clipboard_after_copy()

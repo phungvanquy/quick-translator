@@ -355,20 +355,105 @@ class ScrollableMessageFrame(tk.Frame):
 
         msg_text.config(state="normal")   # stays normal so selection works
 
-        # Auto-fit height: count display lines
-        msg_text.update_idletasks()
-        line_count = int(msg_text.index(tk.END).split(".")[0])
-        msg_text.config(height=max(1, line_count))
-
         # Re-bind mousewheel so scrolling still works inside the bubble
         self._bind_mousewheel(msg_text)
 
+        # Pack first so word-wrap can be calculated against actual width
         msg_text.pack(fill="x", anchor="e" if is_user else "w")
+        msg_text.update_idletasks()
+
+        # Auto-fit height using display lines (accounts for word wrap)
+        try:
+            dl = msg_text.count("1.0", tk.END, "displaylines")
+            display_lines = int(dl[0]) if dl else 1
+        except (TypeError, IndexError, tk.TclError):
+            display_lines = max(1, int(msg_text.index(tk.END).split(".")[0]) - 1)
+        msg_text.config(height=max(1, display_lines))
 
         # Small spacer
         tk.Frame(self._inner, bg=BG, height=4).pack(fill="x")
 
         self.scroll_to_bottom()
+
+    def start_streaming_message(self) -> dict:
+        """Create an empty AI bubble and return a handle for streaming.
+
+        Returns a dict with:
+          - 'widget': the tk.Text widget to append to
+          - 'outer': the outer frame
+          - 'append': callable(chunk_str) to append text
+          - 'finish': callable(full_markdown_str) to re-render with markdown
+        """
+        pad_x = 10
+        outer = tk.Frame(self._inner, bg=BG)
+        outer.pack(fill="x", padx=pad_x, pady=(4, 0), anchor="w")
+
+        tk.Label(outer, text="AI", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+
+        msg_text = tk.Text(
+            outer, bg=BG, fg=TEXT, font=FONT_UI,
+            relief="flat", bd=1, padx=10, pady=8,
+            wrap="word", cursor="xterm", state="normal",
+            highlightthickness=0,
+            selectbackground=OVERLAY, selectforeground=TEXT,
+            inactiveselectbackground=OVERLAY,
+            spacing1=2, spacing3=2, width=52,
+        )
+        _configure_tags(msg_text)
+        msg_text.insert(tk.END, "⏳", "normal")
+
+        def _block_edits(event):
+            if event.state & 0x4:
+                if event.keysym.lower() in ("a", "c"):
+                    return
+                return "break"
+            if event.keysym in (
+                "Left", "Right", "Up", "Down",
+                "Home", "End", "Prior", "Next",
+                "Shift_L", "Shift_R", "Control_L", "Control_R",
+            ):
+                return
+            return "break"
+
+        msg_text.bind("<Key>", _block_edits)
+        msg_text.bind("<Button-3>", lambda e: _show_copy_menu(msg_text, e))
+        self._bind_mousewheel(msg_text)
+        msg_text.pack(fill="x", anchor="w")
+
+        tk.Frame(self._inner, bg=BG, height=4).pack(fill="x")
+        self.scroll_to_bottom()
+
+        _started = {"v": False}
+        smf = self
+
+        def _refit():
+            try:
+                msg_text.update_idletasks()
+                dl = msg_text.count("1.0", tk.END, "displaylines")
+                display_lines = int(dl[0]) if dl else 1
+            except (TypeError, IndexError, tk.TclError):
+                display_lines = max(1, int(msg_text.index(tk.END).split(".")[0]) - 1)
+            msg_text.config(height=max(1, display_lines))
+            smf.scroll_to_bottom()
+
+        def append(chunk: str):
+            if not _started["v"]:
+                msg_text.delete("1.0", tk.END)
+                _started["v"] = True
+            msg_text.insert(tk.END, chunk, "normal")
+            _refit()
+
+        def finish(full_md: str):
+            msg_text.delete("1.0", tk.END)
+            render_markdown_to_text(msg_text, full_md)
+            content = msg_text.get("1.0", tk.END)
+            stripped = content.rstrip("\n")
+            if len(stripped) < len(content) - 1:
+                msg_text.delete(f"1.0 + {len(stripped)}c", tk.END)
+            _refit()
+
+        return {"widget": msg_text, "outer": outer, "append": append, "finish": finish}
 
 
 # ── Focus helper ──────────────────────────────────────────────────────────────
@@ -420,19 +505,19 @@ def _bind_close_outside(popup: tk.Toplevel, close_fn):
 
 def show_chat_popup(
     selected_text: str,
-    get_tk_root,          # callable → tk.Tk hidden root
-    chat_with_context,    # callable(text, question, history) → str
-    get_config,           # callable() → dict snapshot
+    get_tk_root,                # callable → tk.Tk hidden root
+    chat_with_context_stream,   # callable(text, question, history) → generator of str chunks
+    get_config,                 # callable() → dict snapshot
 ) -> None:
     """
     Open the chat popup as a Toplevel child of the hidden root.
 
     Parameters
     ──────────
-    selected_text     : the text the user had selected when they pressed the hotkey
-    get_tk_root       : factory for the shared hidden tk.Tk root
-    chat_with_context : function that calls the OpenAI API
-    get_config        : function that returns a config snapshot dict
+    selected_text            : the text the user had selected when they pressed the hotkey
+    get_tk_root              : factory for the shared hidden tk.Tk root
+    chat_with_context_stream : streaming generator function that calls the OpenAI API
+    get_config               : function that returns a config snapshot dict
     """
     root = get_tk_root()
     popup = tk.Toplevel(root)
@@ -611,15 +696,24 @@ def show_chat_popup(
         input_var.set("")
         send_btn.config(state="disabled", text="⏳", bg=MUTED)
         msg_area.add_message("user", question)
+        handle = msg_area.start_streaming_message()
 
         def do_chat():
-            reply = chat_with_context(_ctx["text"], question, chat_history)
-            chat_history.append({"role": "user",      "content": question})
-            chat_history.append({"role": "assistant", "content": reply})
-            if popup.winfo_exists():
-                popup.after(0, lambda: msg_area.add_message("assistant", reply))
-                popup.after(0, lambda: send_btn.config(
-                    state="normal", text="Send ⏎", bg=BLUE))
+            full_reply = []
+            try:
+                for chunk in chat_with_context_stream(_ctx["text"], question, chat_history):
+                    if not popup.winfo_exists():
+                        return
+                    full_reply.append(chunk)
+                    popup.after(0, lambda c=chunk: handle["append"](c))
+            finally:
+                reply = "".join(full_reply).strip()
+                chat_history.append({"role": "user",      "content": question})
+                chat_history.append({"role": "assistant", "content": reply})
+                if popup.winfo_exists():
+                    popup.after(0, lambda: handle["finish"](reply))
+                    popup.after(0, lambda: send_btn.config(
+                        state="normal", text="Send ⏎", bg=BLUE))
 
         threading.Thread(target=do_chat, daemon=True).start()
 
