@@ -9,7 +9,6 @@ import threading
 import time
 import json
 import os
-import ctypes
 import tkinter as tk
 from tkinter import ttk
 import pyperclip
@@ -50,7 +49,7 @@ def get_config() -> dict:
 def update_config(partial: dict) -> None:
     with _config_lock:
         _config.update(partial)
-    save_config(_config)
+        save_config(_config)
 
 _config = load_config()
 
@@ -135,14 +134,7 @@ def get_tk_root() -> tk.Tk:
 def tk_call(fn):
     get_tk_root().after(0, fn)
 
-# ── Colour constants (shared with translate popup) ────────────────────────────
-BG      = "#1e1e2e"
-SURFACE = "#313244"
-OVERLAY = "#45475a"
-MUTED   = "#6c7086"
-TEXT_C  = "#cdd6f4"
-BLUE    = "#89b4fa"
-CYAN    = "#74c7ec"
+from constants import BG, SURFACE, OVERLAY, MUTED, TEXT_C, BLUE, SAPPHIRE
 
 # ── Translation popup ─────────────────────────────────────────────────────────
 def _bind_close_outside(popup, close_fn):
@@ -376,9 +368,9 @@ def open_settings() -> None:
     tk.Button(win, text="Save", command=save_and_close,
               bg=BLUE, fg=BG, font=("Segoe UI", 10, "bold"),
               relief="flat", padx=20, pady=6, cursor="hand2",
-              activebackground=CYAN, activeforeground=BG).pack(pady=20)
+              activebackground=SAPPHIRE, activeforeground=BG).pack(pady=20)
 
-    win.mainloop()
+    win.wait_window()
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":

@@ -14,38 +14,19 @@ Fixes addressed
    bar stays pinned to the bottom.
 """
 
-import ctypes
+import platform
 import threading
 import tkinter as tk
 from tkinter import font as tkfont
 
 import mistune  # pip install mistune
 
-# ── Colour palette (Catppuccin Mocha) ────────────────────────────────────────
-BG        = "#1e1e2e"
-SURFACE   = "#313244"
-OVERLAY   = "#45475a"
-MUTED     = "#6c7086"
-TEXT      = "#cdd6f4"
-BLUE      = "#89b4fa"
-CYAN      = "#89dceb"
-GREEN     = "#a6e3a1"
-YELLOW    = "#f9e2af"
-MAUVE     = "#cba6f7"
-CODE_BG   = "#181825"
-CODE_FG   = "#cdd6f4"
-SCROLLBAR = "#45475a"
-
-FONT_UI   = ("Segoe UI", 10)
-FONT_BOLD = ("Segoe UI", 10, "bold")
-FONT_ITAL = ("Segoe UI", 10, "italic")
-FONT_BI   = ("Segoe UI", 10, "bold italic")
-FONT_MONO = ("Consolas", 10)
-FONT_H1   = ("Segoe UI", 14, "bold")
-FONT_H2   = ("Segoe UI", 12, "bold")
-FONT_H3   = ("Segoe UI", 11, "bold")
-
-WRAP_WIDTH = 440   # px — wraplength for message labels
+from constants import (
+    BG, SURFACE, OVERLAY, MUTED, TEXT_C as TEXT, BLUE, CYAN, GREEN, YELLOW,
+    MAUVE, CODE_BG, CODE_FG, SCROLLBAR,
+    FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO,
+    FONT_H1, FONT_H2, FONT_H3, WRAP_WIDTH,
+)
 
 # ── Markdown → tk.Text renderer ───────────────────────────────────────────────
 
@@ -404,8 +385,10 @@ def _force_focus(popup: tk.Toplevel, entry: tk.Entry | None = None):
         if entry:
             entry.focus_force()
             entry.icursor(tk.END)
-        hwnd = ctypes.windll.user32.GetParent(popup.winfo_id())
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        if platform.system() == "Windows":
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(popup.winfo_id())
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
 
