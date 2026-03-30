@@ -18,7 +18,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 # ── Config ────────────────────────────────────────────────────────────────────
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".quicktranslator_config.json")
 DEFAULT_CONFIG = {
     "api_key": "",
     "base_url": "https://api.openai.com/v1",
@@ -38,7 +38,7 @@ def save_config(cfg: dict) -> None:
 
 config = load_config()
 
-# ── Global hotkey variables (moved to top to fix syntax error) ────────────────
+# ── Global hotkey variables ───────────────────────────────────────────────────
 _last_ctrl_c_time = 0.0
 _waiting_for_combo = False
 _last_trigger_time = 0.0
@@ -274,7 +274,6 @@ def show_chat_popup(selected_text: str) -> None:
     make_draggable(popup)
     position_popup(popup)
 
-    # Strong auto-focus (works reliably now)
     popup.grab_set()
     popup.lift()
 
@@ -291,14 +290,13 @@ def show_chat_popup(selected_text: str) -> None:
 
     popup.mainloop()
 
-# ── Hotkey engine (fixed global declarations) ─────────────────────────────────
+# ── Hotkey engine ─────────────────────────────────────────────────────────────
 def on_key(event):
-    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time   # ← MUST be at the top
+    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time
 
     ctrl_held = keyboard.is_pressed("ctrl")
     now = time.time()
 
-    # Debounce protection (prevents multiple popups)
     with _trigger_lock:
         if now - _last_trigger_time < 0.4:
             return
