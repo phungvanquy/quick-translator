@@ -43,9 +43,11 @@ def _configure_tags(widget: tk.Text) -> None:
     widget.tag_configure("h3",        font=FONT_H3,   foreground=MAUVE,
                          spacing1=2, spacing3=2)
     widget.tag_configure("code",      font=FONT_MONO, foreground=CYAN,
-                         background=CODE_BG)
+                         background=CODE_BG,
+                         selectbackground=OVERLAY)
     widget.tag_configure("codeblock", font=FONT_MONO, foreground=CODE_FG,
                          background=CODE_BG,
+                         selectbackground=OVERLAY,
                          lmargin1=10, lmargin2=10, rmargin=10,
                          spacing1=6, spacing3=6)
     widget.tag_configure("bullet",    lmargin1=10, lmargin2=22,
