@@ -153,6 +153,7 @@ def show_popup(original, translation):
 
 # ── Settings window ───────────────────────────────────────────────────────────
 
+
 def open_settings():
     win = tk.Tk()
     win.title("Quick Translator — Settings")
@@ -162,7 +163,7 @@ def open_settings():
 
     # Center on screen
     win.update_idletasks()
-    w, h = 420, 320
+    w, h = 420, 370
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
@@ -173,6 +174,7 @@ def open_settings():
     style.configure("TButton", background="#313244", foreground="#cdd6f4", font=("Segoe UI", 10))
     style.map("TButton", background=[("active", "#45475a")])
 
+
     def row(parent, label, default, show=None):
         ttk.Label(parent, text=label).pack(anchor="w", padx=20, pady=(12, 2))
         var = tk.StringVar(value=default)
@@ -180,13 +182,15 @@ def open_settings():
         e.pack(padx=20, fill="x")
         return var
 
-    api_var    = row(win, "API Key", config["api_key"], show="•")
-    url_var    = row(win, "Base URL", config["base_url"])
-    lang_var   = row(win, "Target Language", config["target_language"])
+    api_var  = row(win, "API Key", config["api_key"], show="•")
+    url_var  = row(win, "Base URL", config["base_url"])
 
-    # Show/hide API key toggle
+    model_var = row(win, "Model", config["model"])
+    lang_var  = row(win, "Target Language", config["target_language"])
+
+    # ── Show/hide API key toggle ──────────────────────────────────────────────
     def toggle_key():
-        entries = [w for w in win.winfo_children() if isinstance(w, ttk.Entry)]
+        entries = [c for c in win.winfo_children() if isinstance(c, ttk.Entry)]
         current = entries[0].cget("show")
         entries[0].config(show="" if current == "•" else "•")
         show_btn.config(text="Hide" if current == "•" else "Show")
@@ -202,6 +206,7 @@ def open_settings():
     def save_and_close():
         config["api_key"]         = api_var.get().strip()
         config["base_url"]        = url_var.get().strip()
+        config["model"]           = model_var.get().strip() or "gpt-4o-mini"
         config["target_language"] = lang_var.get().strip()
         save_config(config)
         win.destroy()
@@ -213,7 +218,7 @@ def open_settings():
         relief="flat", padx=20, pady=6,
         cursor="hand2",
         activebackground="#74c7ec", activeforeground="#1e1e2e",
-    ).pack(pady=20)
+    ).pack(pady=18)
 
     win.mainloop()
 
