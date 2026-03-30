@@ -21,12 +21,14 @@ import tkinter as tk
 import mistune  # pip install mistune
 
 from constants import (
-    BG, SURFACE, SURFACE1, OVERLAY, MUTED, SUBTEXT, TEXT_C as TEXT,
+    BG, SURFACE, SURFACE1, SURFACE2, OVERLAY, MUTED, SUBTEXT, TEXT_C as TEXT,
     BLUE, CYAN, GREEN, YELLOW, RED,
     MAUVE, CODE_BG, CODE_FG, SCROLLBAR, SAPPHIRE,
+    BORDER, SHADOW, USER_BG, AI_BG, INPUT_BG, ACCENT,
     FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO,
     FONT_H1, FONT_H2, FONT_H3, FONT_SM, FONT_XS, WRAP_WIDTH,
-    bind_hover,
+    PAD_SM, PAD, PAD_LG,
+    bind_hover, fade_in,
 )
 
 # ── Markdown → tk.Text renderer ───────────────────────────────────────────────
@@ -230,10 +232,10 @@ class ScrollableMessageFrame(tk.Frame):
                                  bd=0, relief="flat")
         self._scrollbar = tk.Scrollbar(self, orient="vertical",
                                        command=self._canvas.yview,
-                                       bg=SURFACE, troughcolor=BG,
-                                       activebackground=OVERLAY,
+                                       bg=SURFACE1, troughcolor=BG,
+                                       activebackground=SURFACE2,
                                        highlightthickness=0, bd=0,
-                                       relief="flat", width=6)
+                                       relief="flat", width=5)
         self._canvas.configure(yscrollcommand=self._scrollbar.set)
 
         self._scrollbar.pack(side="right", fill="y")
@@ -281,30 +283,27 @@ class ScrollableMessageFrame(tk.Frame):
     def add_message(self, role: str, text: str) -> None:
         """Append a new message bubble (user or AI) to the frame."""
         is_user = role == "user"
-        pad_x   = 10
+        pad_x   = PAD
 
         outer = tk.Frame(self._inner, bg=BG)
-        outer.pack(fill="x", padx=pad_x, pady=(4, 0),
+        outer.pack(fill="x", padx=pad_x, pady=(PAD_SM, 0),
                    anchor="e" if is_user else "w")
 
         label_text = "You" if is_user else "AI"
-        label_fg   = BLUE if is_user else MUTED
+        label_fg   = ACCENT if is_user else MUTED
         tk.Label(outer, text=label_text, bg=BG, fg=label_fg,
                  font=("Segoe UI", 8, "bold")).pack(
-                     anchor="e" if is_user else "w")
+                     anchor="e" if is_user else "w", pady=(0, 2))
 
-        bubble_bg = SURFACE if is_user else BG
-        bubble_bd = 1
+        bubble_bg = USER_BG if is_user else AI_BG
 
-        # We use a tk.Text so we can apply Markdown tags.
-        # height=1 is a starting guess; we'll auto-fit below.
         msg_text = tk.Text(
             outer,
             bg=bubble_bg, fg=TEXT,
             font=FONT_UI,
             relief="flat",
-            bd=bubble_bd,
-            padx=10, pady=8,
+            bd=0,
+            padx=PAD, pady=10,
             wrap="word",
             cursor="xterm",        # I-beam: signals text is selectable
             state="normal",
@@ -384,16 +383,16 @@ class ScrollableMessageFrame(tk.Frame):
           - 'append': callable(chunk_str) to append text
           - 'finish': callable(full_markdown_str) to re-render with markdown
         """
-        pad_x = 10
+        pad_x = PAD
         outer = tk.Frame(self._inner, bg=BG)
-        outer.pack(fill="x", padx=pad_x, pady=(4, 0), anchor="w")
+        outer.pack(fill="x", padx=pad_x, pady=(PAD_SM, 0), anchor="w")
 
         tk.Label(outer, text="AI", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 2))
 
         msg_text = tk.Text(
-            outer, bg=BG, fg=TEXT, font=FONT_UI,
-            relief="flat", bd=1, padx=10, pady=8,
+            outer, bg=AI_BG, fg=TEXT, font=FONT_UI,
+            relief="flat", bd=0, padx=PAD, pady=10,
             wrap="word", cursor="xterm", state="normal",
             highlightthickness=0,
             selectbackground=OVERLAY, selectforeground=TEXT,
@@ -523,12 +522,11 @@ def show_chat_popup(
     popup = tk.Toplevel(root)
     popup.overrideredirect(True)
     popup.attributes("-topmost", True)
-    popup.attributes("-alpha", 0.97)
-    popup.configure(bg=BG)
+    popup.configure(bg=SHADOW)  # dark 1px shadow border
 
     # ── Window size & minimum ─────────────────────────────────────────────────
-    WIN_W, WIN_H = 480, 560
-    MIN_W, MIN_H = 360, 300
+    WIN_W, WIN_H = 500, 580
+    MIN_W, MIN_H = 380, 320
     popup.minsize(MIN_W, MIN_H)
     popup.resizable(True, True)
 
@@ -541,6 +539,7 @@ def show_chat_popup(
     if cx + WIN_W > sw: cx = sw - WIN_W - 10
     if cy + WIN_H > sh: cy = sh - WIN_H - 10
     popup.geometry(f"{WIN_W}x{WIN_H}+{cx}+{cy}")
+    fade_in(popup, duration_ms=120)
 
     chat_history: list[dict] = []
     _ctx = {"text": selected_text}  # mutable context; cleared = free chat
@@ -551,31 +550,38 @@ def show_chat_popup(
         except Exception:
             pass
 
-    # ── Root grid: header / context / messages / input ────────────────────────
-    popup.grid_rowconfigure(0, weight=0)   # header
-    popup.grid_rowconfigure(1, weight=0)   # context strip
-    popup.grid_rowconfigure(2, weight=1)   # messages (expands)
-    popup.grid_rowconfigure(3, weight=0)   # input bar
-    popup.grid_columnconfigure(0, weight=1)
+    # ── Root grid: border + content ─────────────────────────────────────────
+    # Outer border via a wrapper frame
+    border_frame = tk.Frame(popup, bg=BORDER, bd=0)
+    border_frame.pack(fill="both", expand=True, padx=1, pady=1)
+
+    content = tk.Frame(border_frame, bg=BG, bd=0)
+    content.pack(fill="both", expand=True, padx=1, pady=1)
+
+    content.grid_rowconfigure(0, weight=0)   # header
+    content.grid_rowconfigure(1, weight=0)   # context strip
+    content.grid_rowconfigure(2, weight=1)   # messages (expands)
+    content.grid_rowconfigure(3, weight=0)   # input bar
+    content.grid_columnconfigure(0, weight=1)
 
     # ─────────────────────────────────────────────────────────────────────────
     # ROW 0 — Header / title bar  (THE ONLY DRAGGABLE ZONE)
     # ─────────────────────────────────────────────────────────────────────────
-    header = tk.Frame(popup, bg=SURFACE, height=36)
+    header = tk.Frame(content, bg=SURFACE, height=40)
     header.grid(row=0, column=0, sticky="ew")
     header.grid_propagate(False)
     header.grid_columnconfigure(0, weight=1)
 
     header_label = tk.Label(header, text="💬  Chat", bg=SURFACE, fg=TEXT,
-             font=("Segoe UI", 9, "bold"), padx=12)
-    header_label.grid(row=0, column=0, sticky="w", pady=8)
+             font=("Segoe UI", 10, "bold"), padx=PAD)
+    header_label.grid(row=0, column=0, sticky="w", pady=10)
 
     close_btn = tk.Button(header, text="✕", command=close,
               bg=SURFACE, fg=MUTED, font=FONT_SM,
-              relief="flat", padx=8, pady=0, bd=0,
+              relief="flat", padx=10, pady=2, bd=0,
               cursor="hand2", activebackground=RED,
               activeforeground=TEXT)
-    close_btn.grid(row=0, column=1, sticky="e", padx=4)
+    close_btn.grid(row=0, column=1, sticky="e", padx=PAD_SM)
     bind_hover(close_btn, RED, SURFACE, TEXT, MUTED)
 
     # Drag state — attached only to the header
@@ -602,13 +608,13 @@ def show_chat_popup(
     # ─────────────────────────────────────────────────────────────────────────
     # ROW 1 — Context strip (selected text preview, clearable)
     # ─────────────────────────────────────────────────────────────────────────
-    ctx_frame = tk.Frame(popup, bg=BG)
-    ctx_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(8, 0))
+    ctx_frame = tk.Frame(content, bg=BG)
+    ctx_frame.grid(row=1, column=0, sticky="ew", padx=PAD, pady=(10, 0))
     ctx_frame.grid_columnconfigure(0, weight=1)
 
     orig_short = selected_text if len(selected_text) < 90 else selected_text[:87] + "…"
     ctx_label = tk.Label(ctx_frame, text=orig_short, bg=BG, fg=MUTED,
-             font=("Segoe UI", 8), wraplength=400, justify="left",
+             font=("Segoe UI", 8), wraplength=420, justify="left",
              anchor="w")
     ctx_label.grid(row=0, column=0, sticky="ew")
 
@@ -627,48 +633,48 @@ def show_chat_popup(
     clear_ctx_btn.grid(row=0, column=1, sticky="ne", padx=(4, 0))
     bind_hover(clear_ctx_btn, BG, BG, RED, MUTED)
 
-    ctx_sep = tk.Frame(popup, bg=SURFACE, height=1)
-    ctx_sep.grid(row=1, column=0, sticky="ew", padx=12, pady=(6, 0))
+    ctx_sep = tk.Frame(content, bg=SURFACE1, height=1)
+    ctx_sep.grid(row=1, column=0, sticky="ew", padx=PAD, pady=(PAD_SM, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
     # ROW 2 — Scrollable message area
     # ─────────────────────────────────────────────────────────────────────────
-    msg_area = ScrollableMessageFrame(popup)
+    msg_area = ScrollableMessageFrame(content)
     msg_area.grid(row=2, column=0, sticky="nsew", padx=0, pady=(4, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
     # ROW 3 — Input bar
     # ─────────────────────────────────────────────────────────────────────────
-    input_frame = tk.Frame(popup, bg=SURFACE)
+    input_frame = tk.Frame(content, bg=SURFACE)
     input_frame.grid(row=3, column=0, sticky="ew")
     input_frame.grid_columnconfigure(0, weight=1)
 
-    tk.Frame(input_frame, bg=OVERLAY, height=1).grid(
+    tk.Frame(input_frame, bg=SURFACE1, height=1).grid(
         row=0, column=0, columnspan=2, sticky="ew")
 
     input_var = tk.StringVar()
     input_entry = tk.Entry(
         input_frame, textvariable=input_var,
-        bg=SURFACE, fg=TEXT, insertbackground=TEXT,
+        bg=INPUT_BG, fg=TEXT, insertbackground=TEXT,
         font=FONT_UI, relief="flat",
         highlightthickness=0, bd=0,
     )
     input_entry.grid(row=1, column=0, sticky="ew",
-                     padx=(12, 6), pady=10, ipady=6)
+                     padx=(PAD, PAD_SM), pady=PAD, ipady=7)
 
     send_btn = tk.Button(
         input_frame, text="Send ⏎",
-        bg=BLUE, fg=BG, font=("Segoe UI", 9, "bold"),
-        relief="flat", padx=12, pady=6, cursor="hand2",
+        bg=ACCENT, fg=BG, font=("Segoe UI", 9, "bold"),
+        relief="flat", padx=14, pady=7, cursor="hand2",
         activebackground=SAPPHIRE, activeforeground=BG, bd=0,
     )
-    send_btn.grid(row=1, column=1, sticky="e", padx=(0, 12), pady=10)
-    bind_hover(send_btn, SAPPHIRE, BLUE)
+    send_btn.grid(row=1, column=1, sticky="e", padx=(0, PAD), pady=PAD)
+    bind_hover(send_btn, SAPPHIRE, ACCENT)
 
     # ── Resize grip (bottom-right corner) ────────────────────────────────────
-    grip = tk.Label(popup, text="⠿", bg=BG, fg=MUTED,
+    grip = tk.Label(content, text="⠿", bg=BG, fg=MUTED,
                     font=("Segoe UI", 10), cursor="sizing")
-    grip.place(relx=1.0, rely=1.0, anchor="se", x=-2, y=-2)
+    grip.place(relx=1.0, rely=1.0, anchor="se", x=-4, y=-4)
 
     _resize = {"x": 0, "y": 0, "w": WIN_W, "h": WIN_H}
 
@@ -713,7 +719,7 @@ def show_chat_popup(
                 if popup.winfo_exists():
                     popup.after(0, lambda: handle["finish"](reply))
                     popup.after(0, lambda: send_btn.config(
-                        state="normal", text="Send ⏎", bg=BLUE))
+                        state="normal", text="Send ⏎", bg=ACCENT))
 
         threading.Thread(target=do_chat, daemon=True).start()
 

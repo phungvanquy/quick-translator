@@ -162,10 +162,11 @@ def tk_call(fn):
     get_tk_root().after(0, fn)
 
 from constants import (
-    BG, MANTLE, SURFACE, SURFACE1, OVERLAY, MUTED, SUBTEXT, TEXT_C,
-    BLUE, SAPPHIRE, GREEN, RED,
+    BG, MANTLE, CRUST, SURFACE, SURFACE1, SURFACE2, OVERLAY, MUTED, SUBTEXT, TEXT_C,
+    BLUE, SAPPHIRE, GREEN, RED, BORDER, SHADOW, INPUT_BG, ACCENT,
     FONT_UI, FONT_BOLD, FONT_SM, FONT_XS, FONT_MONO,
-    bind_hover,
+    PAD_SM, PAD, PAD_LG,
+    bind_hover, fade_in,
 )
 
 # ── Translation popup ─────────────────────────────────────────────────────────
@@ -198,19 +199,25 @@ def show_translate_popup(original: str, stream_gen) -> None:
     popup = tk.Toplevel(root)
     popup.overrideredirect(True)
     popup.attributes("-topmost", True)
-    popup.attributes("-alpha", 0.97)
-    popup.configure(bg=BG)
+    popup.configure(bg=SHADOW)  # shadow border trick: 1px dark border via outer bg
 
-    WIN_W = 420
-    pad = 16
+    WIN_W = 440
+    pad = PAD_LG
     drag_data = {"x": 0, "y": 0}
 
     def close(e=None):
         try: popup.destroy()
         except Exception: pass
 
+    # ── Outer border frame (1px shadow border) ────────────────────────────────
+    border = tk.Frame(popup, bg=BORDER, bd=0)
+    border.pack(fill="both", expand=True, padx=1, pady=1)
+
+    inner = tk.Frame(border, bg=BG, bd=0)
+    inner.pack(fill="both", expand=True, padx=1, pady=1)
+
     # ── Header (drag handle) ──────────────────────────────────────────────────
-    header = tk.Frame(popup, bg=SURFACE, padx=12, pady=8)
+    header = tk.Frame(inner, bg=SURFACE, padx=PAD, pady=10)
     header.pack(fill="x")
 
     def _press(e):
@@ -230,7 +237,7 @@ def show_translate_popup(original: str, stream_gen) -> None:
     title_lbl.bind("<B1-Motion>", _drag)
 
     close_btn = tk.Button(header, text="✕", command=close, bg=SURFACE, fg=MUTED,
-                          font=FONT_SM, relief="flat", padx=6, pady=0,
+                          font=FONT_SM, relief="flat", padx=8, pady=2,
                           cursor="hand2", activebackground=RED,
                           activeforeground=TEXT_C, bd=0)
     close_btn.pack(side="right")
@@ -238,29 +245,29 @@ def show_translate_popup(original: str, stream_gen) -> None:
 
     # ── Original text (muted, selectable) ─────────────────────────────────────
     orig_short = original if len(original) < 120 else original[:117] + "…"
-    orig_lbl = tk.Label(popup, text=orig_short, bg=BG, fg=MUTED,
+    orig_lbl = tk.Label(inner, text=orig_short, bg=BG, fg=MUTED,
                         font=FONT_XS, wraplength=WIN_W - pad * 2,
                         justify="left", anchor="w")
-    orig_lbl.pack(anchor="w", padx=pad, pady=(10, 6))
+    orig_lbl.pack(anchor="w", padx=pad, pady=(PAD, PAD_SM))
 
     # Separator
-    tk.Frame(popup, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
+    tk.Frame(inner, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
 
     # ── Translation result (selectable Text widget) ───────────────────────────
-    trans_text = tk.Text(popup, bg=BG, fg=TEXT_C, font=("Segoe UI", 12),
-                         wrap="word", relief="flat", bd=0, padx=pad, pady=8,
+    trans_text = tk.Text(inner, bg=BG, fg=TEXT_C, font=("Segoe UI", 12),
+                         wrap="word", relief="flat", bd=0, padx=pad, pady=10,
                          highlightthickness=0, cursor="xterm",
                          selectbackground=OVERLAY, selectforeground=TEXT_C,
                          inactiveselectbackground=OVERLAY,
-                         height=2)
+                         height=2, spacing1=2, spacing3=2)
     _configure_tags(trans_text)
     trans_text.insert(tk.END, "⏳", "normal")
     trans_text.config(state="normal")
-    trans_text.pack(anchor="w", fill="x", padx=0, pady=(4, 0))
+    trans_text.pack(anchor="w", fill="x", padx=0, pady=(6, 0))
 
     # Read-only: block edits but allow selection
     def _block_edits(event):
-        if event.state & 0x4:  # Ctrl held
+        if event.state & 0x4:
             if event.keysym.lower() in ("a", "c"):
                 return
             return "break"
@@ -272,8 +279,8 @@ def show_translate_popup(original: str, stream_gen) -> None:
     trans_text.bind("<Key>", _block_edits)
 
     # ── Bottom bar ────────────────────────────────────────────────────────────
-    bottom = tk.Frame(popup, bg=BG)
-    bottom.pack(fill="x", padx=pad, pady=(4, pad))
+    bottom = tk.Frame(inner, bg=BG)
+    bottom.pack(fill="x", padx=pad, pady=(PAD_SM, PAD))
 
     _full_text = {"value": ""}
 
@@ -282,18 +289,18 @@ def show_translate_popup(original: str, stream_gen) -> None:
             sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
             if sel:
                 pyperclip.copy(sel)
-                copy_btn.config(text="✓ Copied", fg=GREEN)
-                popup.after(800, close)
+                copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
+                popup.after(900, close)
                 return
         except tk.TclError:
             pass
         pyperclip.copy(_full_text["value"])
-        copy_btn.config(text="✓ Copied", fg=GREEN)
-        popup.after(800, close)
+        copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
+        popup.after(900, close)
 
-    copy_btn = tk.Button(bottom, text="⎘ Copy", command=copy_translation,
-                         bg=SURFACE, fg=TEXT_C, font=FONT_SM,
-                         relief="flat", padx=12, pady=5, cursor="hand2",
+    copy_btn = tk.Button(bottom, text="⎘  Copy", command=copy_translation,
+                         bg=SURFACE, fg=TEXT_C, font=("Segoe UI", 9, "bold"),
+                         relief="flat", padx=14, pady=6, cursor="hand2",
                          activebackground=OVERLAY, activeforeground=TEXT_C, bd=0)
     copy_btn.pack(side="right")
     bind_hover(copy_btn, OVERLAY, SURFACE)
@@ -311,6 +318,7 @@ def show_translate_popup(original: str, stream_gen) -> None:
     if y + 200 > sh: y = sh - 200 - 10
     popup.geometry(f"{WIN_W}x200+{x}+{y}")
     popup.focus_force()
+    fade_in(popup, duration_ms=120)
 
     # ── Resize helper ────────────────────────────────────────────────────────
     _pos = {"x": x, "y": y}
@@ -327,7 +335,7 @@ def show_translate_popup(original: str, stream_gen) -> None:
         trans_text.config(height=max(2, min(display_lines + 1, 15)))
         popup.update_idletasks()
         ph = popup.winfo_reqheight()
-        MIN_H, MAX_H = 120, 500
+        MIN_H, MAX_H = 140, 520
         ph = max(MIN_H, min(ph, MAX_H))
         popup.geometry(f"{WIN_W}x{ph}+{_pos['x']}+{_pos['y']}")
 
@@ -347,11 +355,9 @@ def show_translate_popup(original: str, stream_gen) -> None:
     def _stream_done():
         if not popup.winfo_exists():
             return
-        # Re-render with markdown formatting
         full = _full_text["value"].strip()
         trans_text.delete("1.0", tk.END)
         render_markdown_to_text(trans_text, full)
-        # Strip trailing blank lines
         content = trans_text.get("1.0", tk.END)
         stripped = content.rstrip("\n")
         if len(stripped) < len(content) - 1:
@@ -487,7 +493,7 @@ def open_settings() -> None:
     win.resizable(False, False)
     win.configure(bg=BG)
     win.attributes("-topmost", True)
-    w, h = 480, 620
+    w, h = 500, 640
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
@@ -497,24 +503,32 @@ def open_settings() -> None:
     style.configure("TEntry", fieldbackground=SURFACE, foreground=TEXT_C,
                     insertcolor=TEXT_C)
     style.configure("Section.TLabel", background=BG, foreground=MUTED,
-                    font=FONT_XS)
+                    font=("Segoe UI", 8, "bold"))
 
-    pad_x = 24
+    pad_x = 28
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    hdr = tk.Frame(win, bg=SURFACE, height=48)
+    hdr.pack(fill="x")
+    hdr.pack_propagate(False)
+    tk.Label(hdr, text="⚙  Settings", bg=SURFACE, fg=TEXT_C,
+             font=("Segoe UI", 11, "bold"), padx=pad_x).pack(
+                 side="left", fill="y")
 
     # ── Section: API ──────────────────────────────────────────────────────────
     ttk.Label(win, text="API CONFIGURATION", style="Section.TLabel").pack(
-        anchor="w", padx=pad_x, pady=(16, 4))
+        anchor="w", padx=pad_x, pady=(PAD_LG, 4))
     tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(0, 4))
 
     def entry_row(label, default, show=None):
-        ttk.Label(win, text=label).pack(anchor="w", padx=pad_x, pady=(8, 2))
+        ttk.Label(win, text=label).pack(anchor="w", padx=pad_x, pady=(8, 3))
         var = tk.StringVar(value=default)
-        e = tk.Entry(win, textvariable=var, bg=SURFACE, fg=TEXT_C,
+        e = tk.Entry(win, textvariable=var, bg=INPUT_BG, fg=TEXT_C,
                      insertbackground=TEXT_C, font=FONT_UI, relief="flat",
-                     highlightthickness=1, highlightbackground=OVERLAY,
-                     highlightcolor=BLUE, bd=4,
+                     highlightthickness=1, highlightbackground=BORDER,
+                     highlightcolor=ACCENT, bd=6,
                      show=show or "")
-        e.pack(padx=pad_x, fill="x", ipady=3)
+        e.pack(padx=pad_x, fill="x", ipady=4)
         return var, e
 
     api_var, api_entry = entry_row("API Key", cfg["api_key"], show="•")
@@ -531,47 +545,45 @@ def open_settings() -> None:
                          bg=SURFACE, fg=SUBTEXT, font=FONT_XS,
                          relief="flat", padx=8, pady=2, cursor="hand2",
                          activebackground=OVERLAY, activeforeground=TEXT_C, bd=0)
-    show_btn.place(x=w - 70, y=80)
+    show_btn.place(x=w - 75, y=128)
     bind_hover(show_btn, OVERLAY, SURFACE)
 
     # ── Section: Translation ──────────────────────────────────────────────────
     ttk.Label(win, text="TRANSLATION", style="Section.TLabel").pack(
-        anchor="w", padx=pad_x, pady=(16, 4))
+        anchor="w", padx=pad_x, pady=(PAD_LG, 4))
     tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(0, 4))
 
     lang_var, _ = entry_row("Target Language", cfg["target_language"])
 
     # Custom prompt
-    ttk.Label(win, text="Custom Prompt").pack(anchor="w", padx=pad_x, pady=(8, 2))
-    prompt_frame = tk.Frame(win, bg=OVERLAY, bd=0)
-    prompt_frame.pack(padx=pad_x, fill="x")
-    prompt_text = tk.Text(prompt_frame, bg=SURFACE, fg=TEXT_C,
+    ttk.Label(win, text="Custom Prompt").pack(anchor="w", padx=pad_x, pady=(8, 3))
+    prompt_text = tk.Text(win, bg=INPUT_BG, fg=TEXT_C,
                           insertbackground=TEXT_C, font=FONT_UI,
-                          relief="flat", bd=4, height=4, wrap="word",
-                          highlightthickness=1, highlightbackground=OVERLAY,
-                          highlightcolor=BLUE, selectbackground=OVERLAY,
+                          relief="flat", bd=6, height=4, wrap="word",
+                          highlightthickness=1, highlightbackground=BORDER,
+                          highlightcolor=ACCENT, selectbackground=OVERLAY,
                           selectforeground=TEXT_C)
-    prompt_text.pack(fill="x", expand=True)
+    prompt_text.pack(padx=pad_x, fill="x")
     prompt_text.insert("1.0", cfg.get("custom_prompt", DEFAULT_PROMPT))
 
     hint = tk.Label(win, text="Use {target_language} as placeholder.  Leave blank for default.",
                     bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
-    hint.pack(anchor="w", padx=pad_x, pady=(2, 0))
+    hint.pack(anchor="w", padx=pad_x, pady=(3, 0))
 
     def reset_prompt():
         prompt_text.delete("1.0", tk.END)
         prompt_text.insert("1.0", DEFAULT_PROMPT)
 
-    reset_btn = tk.Button(win, text="↺ Reset to default", command=reset_prompt,
+    reset_btn = tk.Button(win, text="↺  Reset to default", command=reset_prompt,
                           bg=BG, fg=MUTED, font=FONT_XS,
                           relief="flat", padx=0, pady=0, cursor="hand2",
                           activebackground=BG, activeforeground=TEXT_C, bd=0)
     reset_btn.pack(anchor="w", padx=pad_x, pady=(2, 0))
-    bind_hover(reset_btn, BG, BG, BLUE, MUTED)
+    bind_hover(reset_btn, BG, BG, ACCENT, MUTED)
 
     # ── Bottom buttons ────────────────────────────────────────────────────────
     btn_frame = tk.Frame(win, bg=BG)
-    btn_frame.pack(fill="x", padx=pad_x, pady=(20, 16))
+    btn_frame.pack(fill="x", padx=pad_x, pady=(24, PAD_LG))
 
     def save_and_close():
         prompt_val = prompt_text.get("1.0", tk.END).strip()
@@ -587,18 +599,18 @@ def open_settings() -> None:
         win.destroy()
 
     cancel_btn = tk.Button(btn_frame, text="Cancel", command=win.destroy,
-                           bg=SURFACE, fg=TEXT_C, font=FONT_SM,
-                           relief="flat", padx=16, pady=6, cursor="hand2",
+                           bg=SURFACE, fg=TEXT_C, font=("Segoe UI", 9, "bold"),
+                           relief="flat", padx=18, pady=7, cursor="hand2",
                            activebackground=OVERLAY, activeforeground=TEXT_C, bd=0)
-    cancel_btn.pack(side="right", padx=(8, 0))
+    cancel_btn.pack(side="right", padx=(10, 0))
     bind_hover(cancel_btn, OVERLAY, SURFACE)
 
-    save_btn = tk.Button(btn_frame, text="Save", command=save_and_close,
-                         bg=BLUE, fg=MANTLE, font=("Segoe UI", 10, "bold"),
-                         relief="flat", padx=20, pady=6, cursor="hand2",
+    save_btn = tk.Button(btn_frame, text="  Save  ", command=save_and_close,
+                         bg=ACCENT, fg=MANTLE, font=("Segoe UI", 10, "bold"),
+                         relief="flat", padx=22, pady=7, cursor="hand2",
                          activebackground=SAPPHIRE, activeforeground=MANTLE, bd=0)
     save_btn.pack(side="right")
-    bind_hover(save_btn, SAPPHIRE, BLUE)
+    bind_hover(save_btn, SAPPHIRE, ACCENT)
 
     win.wait_window()
 
