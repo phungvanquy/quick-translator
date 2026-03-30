@@ -167,6 +167,7 @@ def show_translate_popup(original: str, translation: str) -> None:
     popup.attributes("-alpha", 0.97)
     popup.configure(bg=BG)
 
+    WIN_W = 420
     pad = 16
     drag_data = {"x": 0, "y": 0}
 
@@ -204,19 +205,21 @@ def show_translate_popup(original: str, translation: str) -> None:
     # ── Original text (muted, selectable) ─────────────────────────────────────
     orig_short = original if len(original) < 120 else original[:117] + "…"
     orig_lbl = tk.Label(popup, text=orig_short, bg=BG, fg=MUTED,
-                        font=FONT_XS, wraplength=400, justify="left", anchor="w")
+                        font=FONT_XS, wraplength=WIN_W - pad * 2,
+                        justify="left", anchor="w")
     orig_lbl.pack(anchor="w", padx=pad, pady=(10, 6))
 
     # Separator
     tk.Frame(popup, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
 
     # ── Translation result (selectable Text widget) ───────────────────────────
+    text_width_px = WIN_W - pad * 2
     trans_text = tk.Text(popup, bg=BG, fg=TEXT_C, font=("Segoe UI", 12),
                          wrap="word", relief="flat", bd=0, padx=pad, pady=8,
                          highlightthickness=0, cursor="xterm",
                          selectbackground=OVERLAY, selectforeground=TEXT_C,
                          inactiveselectbackground=OVERLAY,
-                         height=1, width=48)
+                         height=1)
     _configure_tags(trans_text)
     render_markdown_to_text(trans_text, translation)
     # Strip trailing blank lines
@@ -225,10 +228,8 @@ def show_translate_popup(original: str, translation: str) -> None:
     if len(stripped) < len(content) - 1:
         trans_text.delete(f"1.0 + {len(stripped)}c", tk.END)
     trans_text.config(state="normal")
-    # Auto-fit height
-    trans_text.update_idletasks()
-    line_count = int(trans_text.index(tk.END).split(".")[0])
-    trans_text.config(height=max(1, min(line_count, 12)))
+    trans_text.pack(anchor="w", fill="x", padx=0, pady=(4, 0))
+
     # Read-only: block edits but allow selection
     def _block_edits(event):
         if event.state & 0x4:  # Ctrl held
@@ -241,7 +242,6 @@ def show_translate_popup(original: str, translation: str) -> None:
             return
         return "break"
     trans_text.bind("<Key>", _block_edits)
-    trans_text.pack(anchor="w", fill="x", padx=0, pady=(4, 0))
 
     # ── Bottom bar ────────────────────────────────────────────────────────────
     bottom = tk.Frame(popup, bg=BG)
@@ -263,14 +263,28 @@ def show_translate_popup(original: str, translation: str) -> None:
     popup.bind("<Control-c>", lambda e: copy_translation())
     _bind_close_outside(popup, close)
 
+    # ── Size & position ──────────────────────────────────────────────────────
+    # Force fixed width, then compute display lines for proper height
     popup.update_idletasks()
+    popup.geometry(f"{WIN_W}x1")
+    popup.update_idletasks()
+
+    # Count actual display lines (accounts for word wrap)
+    display_lines = int(trans_text.count("1.0", tk.END, "displaylines")[0])
+    trans_text.config(height=max(2, min(display_lines + 1, 15)))
+
+    popup.update_idletasks()
+    ph = popup.winfo_reqheight()
+    # Clamp total popup height
+    MIN_H, MAX_H = 120, 500
+    ph = max(MIN_H, min(ph, MAX_H))
+
     x = popup.winfo_pointerx() + 16
     y = popup.winfo_pointery() + 16
-    pw, ph = popup.winfo_width(), popup.winfo_height()
     sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
-    if x + pw > sw: x = sw - pw - 10
+    if x + WIN_W > sw: x = sw - WIN_W - 10
     if y + ph > sh: y = sh - ph - 10
-    popup.geometry(f"+{x}+{y}")
+    popup.geometry(f"{WIN_W}x{ph}+{x}+{y}")
     popup.focus_force()
 
 # ── Chat popup (delegates to chat_popup.py) ───────────────────────────────────
