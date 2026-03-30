@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install openai keyboard pyperclip pystray Pillow pyinstaller
+        run: pip install openai keyboard pyperclip pystray Pillow pyinstaller mistune
 
       - name: Build EXE
         run: pyinstaller --onefile --noconsole --name QuickTranslator main.py
