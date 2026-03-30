@@ -27,11 +27,15 @@ DEFAULT_CONFIG = {
     "model": "gpt-4o-mini",
 }
 
+# FIX: Protect config reads/writes with a lock so the settings window
+# saving and an in-flight API call can't interleave on the same dict.
+_config_lock = threading.Lock()
+_config: dict = {}
+
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return {**DEFAULT_CONFIG, **json.load(f)}
-    # First run — write defaults so the file always exists
     save_config(DEFAULT_CONFIG)
     return DEFAULT_CONFIG.copy()
 
@@ -39,34 +43,41 @@ def save_config(cfg: dict) -> None:
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
 
-config = load_config()
+def get_config() -> dict:
+    """Return a shallow snapshot — callers read a stable copy."""
+    with _config_lock:
+        return dict(_config)
 
-# ── Global hotkey variables ───────────────────────────────────────────────────
-_last_ctrl_c_time = 0.0
-_waiting_for_combo = False
-_last_trigger_time = 0.0
-_trigger_lock = threading.Lock()
+def update_config(partial: dict) -> None:
+    with _config_lock:
+        _config.update(partial)
+    save_config(_config)
+
+_config = load_config()
 
 # ── OpenAI client helper ──────────────────────────────────────────────────────
-def get_client():
+def get_client(cfg: dict) -> OpenAI:
+    # FIX: Accept a snapshot dict instead of reading the global directly,
+    # so the client is always built from a consistent config state.
     return OpenAI(
-        api_key=config["api_key"],
-        base_url=config["base_url"] or "https://api.openai.com/v1",
+        api_key=cfg["api_key"],
+        base_url=cfg["base_url"] or "https://api.openai.com/v1",
     )
 
 # ── Translation ───────────────────────────────────────────────────────────────
 def translate(text: str) -> str:
-    if not config["api_key"]:
+    cfg = get_config()
+    if not cfg["api_key"]:
         return "⚠ No API key set.\nRight-click the tray icon → Settings."
     try:
-        response = get_client().chat.completions.create(
-            model=config["model"],
+        response = get_client(cfg).chat.completions.create(
+            model=cfg["model"],
             messages=[
                 {
                     "role": "system",
                     "content": (
                         f"You are a translator. Translate the user's text to "
-                        f"{config['target_language']}. "
+                        f"{cfg['target_language']}. "
                         "Reply with ONLY the translation — no explanations, no notes."
                     ),
                 },
@@ -80,7 +91,8 @@ def translate(text: str) -> str:
 
 # ── Chat (multi-turn with context) ────────────────────────────────────────────
 def chat_with_context(selected_text: str, user_question: str, history: list) -> str:
-    if not config["api_key"]:
+    cfg = get_config()
+    if not cfg["api_key"]:
         return "⚠ No API key set.\nRight-click the tray icon → Settings."
     try:
         system = (
@@ -91,14 +103,52 @@ def chat_with_context(selected_text: str, user_question: str, history: list) -> 
         messages = [{"role": "system", "content": system}] + history + [
             {"role": "user", "content": user_question}
         ]
-        response = get_client().chat.completions.create(
-            model=config["model"],
+        response = get_client(cfg).chat.completions.create(
+            model=cfg["model"],
             messages=messages,
             max_tokens=1000,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"⚠ Error: {e}"
+
+# ── Clipboard helper ──────────────────────────────────────────────────────────
+def get_clipboard_after_copy(retries: int = 10, interval: float = 0.05) -> str:
+    """
+    FIX: Retry reading the clipboard instead of a single fixed sleep.
+    Ctrl+C is asynchronous — the OS may not have flushed the selection
+    into the clipboard by the time we read it. Poll until the content
+    stabilises or we time out (~0.5 s max).
+    """
+    prev = pyperclip.paste()
+    for _ in range(retries):
+        time.sleep(interval)
+        current = pyperclip.paste()
+        if current and current != prev:
+            return current.strip()
+    return prev.strip()
+
+# ── Single Tk root (hidden) ───────────────────────────────────────────────────
+# FIX: One tk.Tk() root lives for the entire process lifetime.
+# Every popup becomes a tk.Toplevel() child instead of its own root.
+# Multiple tk.Tk() instances cause "can't invoke event" crashes when a
+# second popup is opened while the first is still alive, and make focus
+# management unpredictable across threads.
+_tk_root: tk.Tk | None = None
+_tk_lock = threading.Lock()
+
+def get_tk_root() -> tk.Tk:
+    global _tk_root
+    with _tk_lock:
+        if _tk_root is None:
+            _tk_root = tk.Tk()
+            _tk_root.withdraw()          # keep the root hidden
+            _tk_root.attributes("-topmost", True)
+        return _tk_root
+
+def tk_call(fn):
+    """Schedule fn() on the Tk main thread via after(0, ...)."""
+    get_tk_root().after(0, fn)
 
 # ── Popup Dragging ────────────────────────────────────────────────────────────
 def make_draggable(popup):
@@ -120,8 +170,12 @@ def make_draggable(popup):
 
 # ── Shared popup helpers ──────────────────────────────────────────────────────
 def bind_close_outside(popup, close_fn):
+    # FIX: Guard the callback with winfo_exists() so that clicks arriving
+    # after the popup is destroyed don't raise TclError.
     def on_click_outside(e=None):
         try:
+            if not popup.winfo_exists():
+                return
             px, py = popup.winfo_rootx(), popup.winfo_rooty()
             pw, ph = popup.winfo_width(), popup.winfo_height()
             mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
@@ -144,12 +198,13 @@ def position_popup(popup):
 def force_window_focus(popup, entry=None):
     """Force OS-level focus using ctypes — works even from hotkey threads."""
     try:
+        if not popup.winfo_exists():
+            return
         popup.lift()
         popup.focus_force()
         if entry:
             entry.focus_force()
             entry.icursor(tk.END)
-        # Tell Windows directly to give this window foreground focus
         hwnd = ctypes.windll.user32.GetParent(popup.winfo_id())
         ctypes.windll.user32.SetForegroundWindow(hwnd)
     except Exception:
@@ -157,7 +212,9 @@ def force_window_focus(popup, entry=None):
 
 # ── Translation popup ─────────────────────────────────────────────────────────
 def show_translate_popup(original: str, translation: str) -> None:
-    popup = tk.Tk()
+    # FIX: Toplevel() instead of a second Tk() root.
+    root = get_tk_root()
+    popup = tk.Toplevel(root)
     popup.overrideredirect(True)
     popup.attributes("-topmost", True)
     popup.attributes("-alpha", 0.97)
@@ -171,7 +228,8 @@ def show_translate_popup(original: str, translation: str) -> None:
 
     top = tk.Frame(popup, bg="#1e1e2e")
     top.pack(fill="x", padx=pad, pady=(pad, 4))
-    tk.Label(top, text=f"→ {config['target_language']}", bg="#313244", fg="#cdd6f4",
+    cfg = get_config()
+    tk.Label(top, text=f"→ {cfg['target_language']}", bg="#313244", fg="#cdd6f4",
              font=("Segoe UI", 9), padx=8, pady=3).pack(side="left")
     tk.Button(top, text="✕", command=close, bg="#1e1e2e", fg="#6c7086",
               font=("Segoe UI", 10), relief="flat", padx=4, pady=0,
@@ -204,11 +262,11 @@ def show_translate_popup(original: str, translation: str) -> None:
     make_draggable(popup)
     position_popup(popup)
     popup.focus_force()
-    popup.mainloop()
 
 # ── Chat popup ────────────────────────────────────────────────────────────────
 def show_chat_popup(selected_text: str) -> None:
-    popup = tk.Tk()
+    root = get_tk_root()
+    popup = tk.Toplevel(root)
     popup.overrideredirect(True)
     popup.attributes("-topmost", True)
     popup.attributes("-alpha", 0.97)
@@ -240,6 +298,8 @@ def show_chat_popup(selected_text: str) -> None:
     history_frame.pack(fill="both", padx=pad, pady=(8, 4), expand=True)
 
     def add_message(role: str, text: str):
+        if not popup.winfo_exists():
+            return
         is_user = role == "user"
         bubble_bg = "#313244" if is_user else "#1e1e2e"
         bubble_fg = "#89b4fa" if is_user else "#cdd6f4"
@@ -272,9 +332,10 @@ def show_chat_popup(selected_text: str) -> None:
             reply = chat_with_context(selected_text, question, chat_history)
             chat_history.append({"role": "user", "content": question})
             chat_history.append({"role": "assistant", "content": reply})
-            popup.after(0, lambda: add_message("assistant", reply))
-            popup.after(0, lambda: send_btn.config(state="normal", text="Send"))
-            popup.after(0, popup.update_idletasks)
+            if popup.winfo_exists():
+                popup.after(0, lambda: add_message("assistant", reply))
+                popup.after(0, lambda: send_btn.config(state="normal", text="Send"))
+                popup.after(0, popup.update_idletasks)
 
         threading.Thread(target=do_chat, daemon=True).start()
 
@@ -290,16 +351,27 @@ def show_chat_popup(selected_text: str) -> None:
     make_draggable(popup)
     position_popup(popup)
 
-    # Force OS-level focus with retries — needed for hotkey-triggered windows
     popup.after(100, lambda: force_window_focus(popup, input_entry))
     popup.after(250, lambda: force_window_focus(popup, input_entry))
     popup.after(450, lambda: force_window_focus(popup, input_entry))
 
-    popup.mainloop()
-
 # ── Hotkey engine ─────────────────────────────────────────────────────────────
-def on_key(event):
-    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time
+_last_ctrl_c_time = 0.0
+_waiting_for_combo = False
+_last_trigger_time = 0.0
+_trigger_lock = threading.Lock()
+_combo_timer: threading.Timer | None = None  # FIX: auto-reset timer handle
+
+def _reset_combo():
+    """Called by the timer when 0.6 s elapses without a completing key."""
+    global _waiting_for_combo
+    _waiting_for_combo = False
+
+def on_press(event):
+    # FIX: Use keyboard.on_press instead of keyboard.hook so we only fire
+    # on keydown events — hook fires on both down and up, doubling the load
+    # and occasionally causing duplicate triggers.
+    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time, _combo_timer
 
     ctrl_held = keyboard.is_pressed("ctrl")
     now = time.time()
@@ -310,16 +382,29 @@ def on_key(event):
 
     if event.name == "c" and ctrl_held:
         if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
+            # Second Ctrl+C within window → translate
+            if _combo_timer:
+                _combo_timer.cancel()
             _waiting_for_combo = False
             with _trigger_lock:
                 _last_trigger_time = now
             threading.Thread(target=handle_translate, daemon=True).start()
         else:
+            # First Ctrl+C — start waiting
             _last_ctrl_c_time = now
             _waiting_for_combo = True
+            # FIX: Auto-reset combo state after 0.6 s so stale state
+            # can't ghost-trigger on the next unrelated Ctrl+C.
+            if _combo_timer:
+                _combo_timer.cancel()
+            _combo_timer = threading.Timer(0.6, _reset_combo)
+            _combo_timer.daemon = True
+            _combo_timer.start()
 
     elif event.name == "space" and ctrl_held and _waiting_for_combo:
         if now - _last_ctrl_c_time < 0.6:
+            if _combo_timer:
+                _combo_timer.cancel()
             _waiting_for_combo = False
             with _trigger_lock:
                 _last_trigger_time = now
@@ -328,23 +413,26 @@ def on_key(event):
             _waiting_for_combo = False
 
     elif event.name not in ("ctrl", "shift", "alt", "left ctrl", "right ctrl"):
+        # Any other key cancels the combo
         _waiting_for_combo = False
+        if _combo_timer:
+            _combo_timer.cancel()
+
+keyboard.on_press(on_press)
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 def handle_translate():
-    time.sleep(0.05)
-    text = pyperclip.paste().strip()
+    text = get_clipboard_after_copy()
     if text:
         result = translate(text)
-        show_translate_popup(text, result)
+        # FIX: Schedule on the Tk thread instead of calling directly from
+        # a background thread — Tkinter is not thread-safe.
+        tk_call(lambda: show_translate_popup(text, result))
 
 def handle_chat():
-    time.sleep(0.05)
-    text = pyperclip.paste().strip()
+    text = get_clipboard_after_copy()
     if text:
-        show_chat_popup(text)
-
-keyboard.hook(on_key)
+        tk_call(lambda: show_chat_popup(text))
 
 # ── System tray ───────────────────────────────────────────────────────────────
 def make_icon():
@@ -366,7 +454,10 @@ def build_tray():
 
 # ── Settings window ───────────────────────────────────────────────────────────
 def open_settings() -> None:
-    win = tk.Tk()
+    cfg = get_config()
+    # Settings gets its own Toplevel too
+    root = get_tk_root()
+    win = tk.Toplevel(root)
     win.title("Quick Translator — Settings")
     win.resizable(False, False)
     win.configure(bg="#1e1e2e")
@@ -386,10 +477,10 @@ def open_settings() -> None:
         ttk.Entry(win, textvariable=var, width=50, show=show or "").pack(padx=20, fill="x")
         return var
 
-    api_var = row("API Key", config["api_key"], show="•")
-    url_var = row("Base URL", config["base_url"])
-    model_var = row("Model", config["model"])
-    lang_var = row("Target Language", config["target_language"])
+    api_var  = row("API Key", cfg["api_key"], show="•")
+    url_var  = row("Base URL", cfg["base_url"])
+    model_var= row("Model", cfg["model"])
+    lang_var = row("Target Language", cfg["target_language"])
 
     def toggle_key():
         entries = [c for c in win.winfo_children() if isinstance(c, ttk.Entry)]
@@ -405,11 +496,12 @@ def open_settings() -> None:
     show_btn.place(x=w - 65, y=68)
 
     def save_and_close():
-        config["api_key"] = api_var.get().strip()
-        config["base_url"] = url_var.get().strip()
-        config["model"] = model_var.get().strip() or "gpt-4o-mini"
-        config["target_language"] = lang_var.get().strip()
-        save_config(config)
+        update_config({
+            "api_key":         api_var.get().strip(),
+            "base_url":        url_var.get().strip(),
+            "model":           model_var.get().strip() or "gpt-4o-mini",
+            "target_language": lang_var.get().strip(),
+        })
         win.destroy()
 
     tk.Button(win, text="Save", command=save_and_close,
@@ -426,7 +518,18 @@ if __name__ == "__main__":
     print(" Ctrl+C+Space → chat about selected text")
     print("Right-click tray icon to configure or quit.")
 
-    if not config["api_key"]:
+    # Initialise the hidden Tk root on the main thread before any popup is needed
+    get_tk_root()
+
+    cfg = get_config()
+    if not cfg["api_key"]:
         threading.Thread(target=open_settings, daemon=True).start()
 
-    build_tray()
+    # FIX: Run the Tk event loop on the main thread alongside the tray.
+    # Previously mainloop() was only called inside each popup (blocking that
+    # thread). Now the hidden root runs it permanently, and the tray runs in
+    # its own thread.
+    tray_thread = threading.Thread(target=build_tray, daemon=True)
+    tray_thread.start()
+
+    get_tk_root().mainloop()
