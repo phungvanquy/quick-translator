@@ -276,6 +276,7 @@ class ScrollableMessageFrame(tk.Frame):
 
     def scroll_to_bottom(self):
         self._canvas.update_idletasks()
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
         self._canvas.yview_moveto(1.0)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -313,6 +314,7 @@ class ScrollableMessageFrame(tk.Frame):
             inactiveselectbackground=OVERLAY,  # keep highlight when focus leaves
             spacing1=2, spacing3=2,
             width=52,              # characters; controls natural wrap width
+            height=1,              # start small; auto-fit below
         )
         _configure_tags(msg_text)
 
@@ -398,6 +400,7 @@ class ScrollableMessageFrame(tk.Frame):
             selectbackground=OVERLAY, selectforeground=TEXT,
             inactiveselectbackground=OVERLAY,
             spacing1=2, spacing3=2, width=52,
+            height=1,
         )
         _configure_tags(msg_text)
         msg_text.insert(tk.END, "⏳", "normal")
