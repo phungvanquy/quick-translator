@@ -1,31 +1,48 @@
-name: Build Windows EXE
+name: Build & Sign Windows EXE
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  id-token: write      # Required for Azure OIDC / Trusted Signing
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ── Python setup ────────────────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
-        run: pip install openai keyboard pyperclip pystray Pillow pyinstaller mistune
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
 
+      # ── Build EXE ───────────────────────────────────────────────────────────
+      # Key changes vs. the old workflow:
+      #   - Removed --uac-admin (not needed; triggers unnecessary UAC prompts
+      #     and raises SmartScreen / SAC suspicion)
+      #   - Added --version-file for proper PE metadata (publisher, description)
+      #   - Added icon.png to bundled data
       - name: Build EXE
         run: >
-          pyinstaller --onefile --noconsole --uac-admin
+          pyinstaller --onefile --noconsole
           --name QuickTranslator
           --icon icon.ico
+          --version-file version_info.py
           --hidden-import pystray._win32
           --hidden-import mistune
           --add-data "constants.py;."
@@ -34,19 +51,67 @@ jobs:
           --add-data "icon.png;."
           main.py
 
+      # ── Code Signing (Azure Trusted Signing) ────────────────────────────────
+      # This step signs the EXE with a certificate trusted by Microsoft,
+      # which is REQUIRED to pass Windows 11 Smart App Control.
+      #
+      # Prerequisites (one-time setup — see README):
+      #   1. Create an Azure Trusted Signing account & certificate profile
+      #   2. Create an App Registration (or use OIDC federated credentials)
+      #   3. Add these GitHub repo secrets:
+      #        AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+      #        SIGNING_ENDPOINT, SIGNING_ACCOUNT_NAME, CERTIFICATE_PROFILE_NAME
+      - name: Azure login
+        if: env.HAS_SIGNING_SECRETS == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign EXE with Trusted Signing
+        if: env.HAS_SIGNING_SECRETS == 'true'
+        uses: azure/trusted-signing-action@v1
+        with:
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.CERTIFICATE_PROFILE_NAME }}
+          files: ${{ github.workspace }}\dist\QuickTranslator.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # ── Build Installer ─────────────────────────────────────────────────────
       - name: Build Installer
         run: iscc installer.iss
 
+      - name: Sign Installer with Trusted Signing
+        if: env.HAS_SIGNING_SECRETS == 'true'
+        uses: azure/trusted-signing-action@v1
+        with:
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.CERTIFICATE_PROFILE_NAME }}
+          files: ${{ github.workspace }}\installer_output\QuickTranslator-Setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # ── Upload artifacts ────────────────────────────────────────────────────
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuickTranslator-Windows
           path: dist/QuickTranslator.exe
-          retention-days: 30
+          retention-days: 90
 
       - name: Upload Installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuickTranslator-Setup
           path: installer_output/QuickTranslator-Setup.exe
-          retention-days: 30
+          retention-days: 90
+
+    env:
+      # Gate signing steps — only run if secrets are configured
+      HAS_SIGNING_SECRETS: ${{ secrets.AZURE_TENANT_ID != '' && secrets.SIGNING_ENDPOINT != '' }}
