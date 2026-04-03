@@ -1,6 +1,6 @@
 openai>=1.0.0
-keyboard
-pyperclip
-pystray
-Pillow
-mistune
+keyboard>=0.13.5
+pyperclip>=1.8.0
+pystray>=0.19.0
+Pillow>=9.0.0
+mistune>=3.0.0
