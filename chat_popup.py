@@ -24,11 +24,12 @@ from constants import (
     BG, SURFACE, SURFACE1, SURFACE2, OVERLAY, MUTED, SUBTEXT, TEXT_C as TEXT,
     BLUE, CYAN, GREEN, YELLOW, RED,
     MAUVE, CODE_BG, CODE_FG, SCROLLBAR, SAPPHIRE,
-    BORDER, SHADOW, USER_BG, AI_BG, INPUT_BG, ACCENT,
-    FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO,
+    BORDER, SHADOW, USER_BG, AI_BG, INPUT_BG, INPUT_BORDER, ACCENT,
+    BTN_PRIMARY_BG, BTN_PRIMARY_FG, BTN_PRIMARY_HOVER,
+    FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO, FONT_BTN,
     FONT_H1, FONT_H2, FONT_H3, FONT_SM, FONT_XS, WRAP_WIDTH,
     PAD_SM, PAD, PAD_LG,
-    bind_hover, fade_in,
+    bind_hover, fade_in, LoadingSpinner,
 )
 
 # ── Markdown → tk.Text renderer ───────────────────────────────────────────────
@@ -403,7 +404,10 @@ class ScrollableMessageFrame(tk.Frame):
             height=1,
         )
         _configure_tags(msg_text)
-        msg_text.insert(tk.END, "⏳", "normal")
+
+        # Animated loading spinner instead of static emoji
+        _spinner = LoadingSpinner(msg_text)
+        _spinner.start()
 
         def _block_edits(event):
             if event.state & 0x4:
@@ -441,12 +445,14 @@ class ScrollableMessageFrame(tk.Frame):
 
         def append(chunk: str):
             if not _started["v"]:
+                _spinner.stop()
                 msg_text.delete("1.0", tk.END)
                 _started["v"] = True
             msg_text.insert(tk.END, chunk, "normal")
             _refit()
 
         def finish(full_md: str):
+            _spinner.stop()
             msg_text.delete("1.0", tk.END)
             render_markdown_to_text(msg_text, full_md)
             content = msg_text.get("1.0", tk.END)
@@ -660,19 +666,21 @@ def show_chat_popup(
         input_frame, textvariable=input_var,
         bg=INPUT_BG, fg=TEXT, insertbackground=TEXT,
         font=FONT_UI, relief="flat",
-        highlightthickness=0, bd=0,
+        highlightthickness=1, highlightbackground=INPUT_BORDER,
+        highlightcolor=ACCENT, bd=4,
     )
     input_entry.grid(row=1, column=0, sticky="ew",
-                     padx=(PAD, PAD_SM), pady=PAD, ipady=7)
+                     padx=(PAD, PAD_SM), pady=PAD, ipady=6)
 
     send_btn = tk.Button(
-        input_frame, text="Send ⏎",
-        bg=ACCENT, fg=BG, font=("Segoe UI", 9, "bold"),
-        relief="flat", padx=14, pady=7, cursor="hand2",
-        activebackground=SAPPHIRE, activeforeground=BG, bd=0,
+        input_frame, text="Send",
+        bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG, font=FONT_BTN,
+        relief="flat", padx=16, pady=7, cursor="hand2",
+        activebackground=BTN_PRIMARY_HOVER, activeforeground=BTN_PRIMARY_FG,
+        bd=0,
     )
     send_btn.grid(row=1, column=1, sticky="e", padx=(0, PAD), pady=PAD)
-    bind_hover(send_btn, SAPPHIRE, ACCENT)
+    bind_hover(send_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
 
     # ── Resize grip (bottom-right corner) ────────────────────────────────────
     grip = tk.Label(content, text="⠿", bg=BG, fg=MUTED,
@@ -703,7 +711,7 @@ def show_chat_popup(
         if not question:
             return
         input_var.set("")
-        send_btn.config(state="disabled", text="⏳", bg=MUTED)
+        send_btn.config(state="disabled", text="\u2026", bg=MUTED)
         msg_area.add_message("user", question)
         handle = msg_area.start_streaming_message()
 
@@ -722,7 +730,7 @@ def show_chat_popup(
                 if popup.winfo_exists():
                     popup.after(0, lambda: handle["finish"](reply))
                     popup.after(0, lambda: send_btn.config(
-                        state="normal", text="Send ⏎", bg=ACCENT))
+                        state="normal", text="Send", bg=BTN_PRIMARY_BG))
 
         threading.Thread(target=do_chat, daemon=True).start()
 
