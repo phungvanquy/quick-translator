@@ -314,54 +314,14 @@ def show_translate_popup(original: str, stream_gen) -> None:
     # ── Bottom bar ────────────────────────────────────────────────────────────
     bottom = tk.Frame(inner, bg=BG)
     bottom.pack(fill="x", padx=pad, pady=(PAD_SM, PAD))
-    bottom.grid_columnconfigure(0, weight=1)  # hint label stretches
-    bottom.grid_columnconfigure(1, weight=0)  # copy button fixed width
 
     _full_text = {"value": ""}
-    _copy_reset_id = {"v": None}
-
-    def _reset_copy_btn():
-        """Restore the copy button to its default state."""
-        if not popup.winfo_exists():
-            return
-        copy_btn.config(text="  Copy  ", fg=BTN_SECONDARY_FG, bg=BTN_SECONDARY_BG)
-        bind_hover(copy_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
-
-    def copy_translation():
-        # Cancel any pending reset so rapid clicks don't flicker
-        if _copy_reset_id["v"] is not None:
-            try:
-                popup.after_cancel(_copy_reset_id["v"])
-            except (tk.TclError, ValueError):
-                pass
-
-        try:
-            sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
-            if sel:
-                pyperclip.copy(sel)
-                copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
-                _copy_reset_id["v"] = popup.after(1500, _reset_copy_btn)
-                return
-        except tk.TclError:
-            pass
-        pyperclip.copy(_full_text["value"])
-        copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
-        _copy_reset_id["v"] = popup.after(1500, _reset_copy_btn)
 
     hint_lbl = tk.Label(bottom, text="Esc to close · Ctrl+C to copy",
                         bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
-    hint_lbl.grid(row=0, column=0, sticky="w", pady=2)
-
-    copy_btn = tk.Button(bottom, text="  Copy  ", command=copy_translation,
-                         bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
-                         font=FONT_BTN, relief="flat", padx=16, pady=6,
-                         cursor="hand2", activebackground=BTN_SECONDARY_HOVER,
-                         activeforeground=TEXT_C, bd=0)
-    copy_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
-    bind_hover(copy_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
+    hint_lbl.pack(side="left")
 
     popup.bind("<Escape>", close)
-    popup.bind("<Control-c>", lambda e: copy_translation())
     _bind_close_outside(popup, close)
 
     # ── Size & position (initial) ────────────────────────────────────────────
