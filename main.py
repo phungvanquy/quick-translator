@@ -637,9 +637,6 @@ def open_settings() -> None:
 
     btn_frame = tk.Frame(win, bg=BG)
     btn_frame.pack(fill="x", padx=pad_x, pady=(PAD_LG, PAD_LG))
-    btn_frame.grid_columnconfigure(0, weight=1)  # spacer stretches
-    btn_frame.grid_columnconfigure(1, weight=0)  # save button fixed
-    btn_frame.grid_columnconfigure(2, weight=0)  # cancel button fixed
 
     def save_and_close():
         prompt_val = prompt_text.get("1.0", tk.END).strip()
@@ -654,23 +651,23 @@ def open_settings() -> None:
         })
         win.destroy()
 
-    save_btn = tk.Button(btn_frame, text="  Save changes  ", command=save_and_close,
-                         bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
-                         font=FONT_BTN_LG, relief="flat",
-                         padx=22, pady=8, cursor="hand2",
-                         activebackground=BTN_PRIMARY_HOVER,
-                         activeforeground=BTN_PRIMARY_FG, bd=0)
-    save_btn.grid(row=0, column=1, sticky="e")
-    bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
-
     cancel_btn = tk.Button(btn_frame, text="  Cancel  ", command=win.destroy,
                            bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
                            font=FONT_BTN, relief="flat",
                            padx=20, pady=8, cursor="hand2",
                            activebackground=BTN_SECONDARY_HOVER,
                            activeforeground=TEXT_C, bd=0)
-    cancel_btn.grid(row=0, column=2, sticky="e", padx=(PAD, 0))
+    cancel_btn.pack(side="right", padx=(PAD, 0))
     bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
+
+    save_btn = tk.Button(btn_frame, text="  Save changes  ", command=save_and_close,
+                         bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
+                         font=FONT_BTN_LG, relief="flat",
+                         padx=22, pady=8, cursor="hand2",
+                         activebackground=BTN_PRIMARY_HOVER,
+                         activeforeground=BTN_PRIMARY_FG, bd=0)
+    save_btn.pack(side="right")
+    bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
 
     win.wait_window()
 
