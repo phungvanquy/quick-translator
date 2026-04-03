@@ -582,8 +582,9 @@ def show_chat_popup(
 
     content.grid_rowconfigure(0, weight=0)   # header
     content.grid_rowconfigure(1, weight=0)   # context strip
-    content.grid_rowconfigure(2, weight=1)   # messages (expands)
-    content.grid_rowconfigure(3, weight=0)   # input bar
+    content.grid_rowconfigure(2, weight=0)   # context separator
+    content.grid_rowconfigure(3, weight=1)   # messages (expands)
+    content.grid_rowconfigure(4, weight=0)   # input bar
     content.grid_columnconfigure(0, weight=1)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -592,10 +593,11 @@ def show_chat_popup(
     header = tk.Frame(content, bg=SURFACE, height=40)
     header.grid(row=0, column=0, sticky="ew")
     header.grid_propagate(False)
-    header.grid_columnconfigure(0, weight=1)
+    header.grid_columnconfigure(0, weight=1)   # title stretches
+    header.grid_columnconfigure(1, weight=0)   # close button fixed
 
     header_label = tk.Label(header, text="💬  Chat", bg=SURFACE, fg=TEXT,
-             font=("Segoe UI", 10, "bold"), padx=PAD)
+             font=("Segoe UI", 10, "bold"), padx=PAD, anchor="w")
     header_label.grid(row=0, column=0, sticky="w", pady=10)
 
     close_btn = tk.Button(header, text="✕", command=close,
@@ -603,7 +605,7 @@ def show_chat_popup(
               relief="flat", padx=10, pady=2, bd=0,
               cursor="hand2", activebackground=RED,
               activeforeground=TEXT)
-    close_btn.grid(row=0, column=1, sticky="e", padx=PAD_SM)
+    close_btn.grid(row=0, column=1, sticky="e", padx=(0, PAD_SM))
     bind_hover(close_btn, RED, SURFACE, TEXT, MUTED)
 
     # Drag state — attached only to the header
@@ -632,12 +634,13 @@ def show_chat_popup(
     # ─────────────────────────────────────────────────────────────────────────
     ctx_frame = tk.Frame(content, bg=BG)
     ctx_frame.grid(row=1, column=0, sticky="ew", padx=PAD, pady=(10, 0))
-    ctx_frame.grid_columnconfigure(0, weight=1)
+    ctx_frame.grid_columnconfigure(0, weight=1)   # label stretches
+    ctx_frame.grid_columnconfigure(1, weight=0)   # close button fixed
 
     orig_short = selected_text if len(selected_text) < 90 else selected_text[:87] + "…"
     ctx_label = tk.Label(ctx_frame, text=orig_short, bg=BG, fg=MUTED,
-             font=("Segoe UI", 8), wraplength=420, justify="left",
-             anchor="w")
+             font=("Segoe UI", 8), wraplength=WIN_W - PAD * 2 - 40,
+             justify="left", anchor="w")
     ctx_label.grid(row=0, column=0, sticky="ew")
 
     def clear_context():
@@ -649,26 +652,27 @@ def show_chat_popup(
 
     clear_ctx_btn = tk.Button(ctx_frame, text="✕", command=clear_context,
                               bg=BG, fg=MUTED, font=FONT_XS,
-                              relief="flat", padx=4, pady=0, bd=0,
+                              relief="flat", padx=6, pady=0, bd=0,
                               cursor="hand2", activebackground=BG,
                               activeforeground=RED)
-    clear_ctx_btn.grid(row=0, column=1, sticky="ne", padx=(4, 0))
+    clear_ctx_btn.grid(row=0, column=1, sticky="ne", padx=(PAD_SM, 0))
     bind_hover(clear_ctx_btn, BG, BG, RED, MUTED)
 
+    # ── ROW 2 — Context separator ────────────────────────────────────────────
     ctx_sep = tk.Frame(content, bg=SURFACE1, height=1)
-    ctx_sep.grid(row=1, column=0, sticky="ew", padx=PAD, pady=(PAD_SM, 0))
+    ctx_sep.grid(row=2, column=0, sticky="ew", padx=PAD, pady=(PAD_SM, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
-    # ROW 2 — Scrollable message area
+    # ROW 3 — Scrollable message area
     # ─────────────────────────────────────────────────────────────────────────
     msg_area = ScrollableMessageFrame(content)
-    msg_area.grid(row=2, column=0, sticky="nsew", padx=0, pady=(4, 0))
+    msg_area.grid(row=3, column=0, sticky="nsew", padx=0, pady=(4, 0))
 
     # ─────────────────────────────────────────────────────────────────────────
-    # ROW 3 — Input bar
+    # ROW 4 — Input bar
     # ─────────────────────────────────────────────────────────────────────────
     input_frame = tk.Frame(content, bg=SURFACE)
-    input_frame.grid(row=3, column=0, sticky="ew")
+    input_frame.grid(row=4, column=0, sticky="ew")
     input_frame.grid_columnconfigure(0, weight=1)
 
     tk.Frame(input_frame, bg=SURFACE1, height=1).grid(
@@ -714,6 +718,11 @@ def show_chat_popup(
         nw = max(MIN_W, _resize["w"] + dw)
         nh = max(MIN_H, _resize["h"] + dh)
         popup.geometry(f"{nw}x{nh}")
+        # Update context label wraplength to match new window width
+        try:
+            ctx_label.config(wraplength=max(100, nw - PAD * 2 - 40))
+        except tk.TclError:
+            pass
 
     grip.bind("<Button-1>",  _grip_press)
     grip.bind("<B1-Motion>", _grip_drag)

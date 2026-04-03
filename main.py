@@ -247,6 +247,8 @@ def show_translate_popup(original: str, stream_gen) -> None:
     # ── Header (drag handle) ──────────────────────────────────────────────────
     header = tk.Frame(inner, bg=SURFACE, padx=PAD, pady=10)
     header.pack(fill="x")
+    header.grid_columnconfigure(0, weight=1)  # title stretches
+    header.grid_columnconfigure(1, weight=0)  # close button fixed
 
     def _press(e):
         drag_data["x"] = e.x_root - popup.winfo_x()
@@ -260,7 +262,7 @@ def show_translate_popup(original: str, stream_gen) -> None:
     cfg = get_config()
     title_lbl = tk.Label(header, text=f"⟶  {cfg['target_language']}", bg=SURFACE,
                          fg=SUBTEXT, font=FONT_SM, anchor="w")
-    title_lbl.pack(side="left")
+    title_lbl.grid(row=0, column=0, sticky="w")
     title_lbl.bind("<Button-1>",  _press)
     title_lbl.bind("<B1-Motion>", _drag)
 
@@ -268,15 +270,15 @@ def show_translate_popup(original: str, stream_gen) -> None:
                           font=FONT_SM, relief="flat", padx=8, pady=2,
                           cursor="hand2", activebackground=RED,
                           activeforeground=TEXT_C, bd=0)
-    close_btn.pack(side="right")
+    close_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
     bind_hover(close_btn, RED, SURFACE, TEXT_C, MUTED)
 
     # ── Original text (muted, selectable) ─────────────────────────────────────
     orig_short = original if len(original) < 120 else original[:117] + "…"
     orig_lbl = tk.Label(inner, text=orig_short, bg=BG, fg=MUTED,
-                        font=FONT_XS, wraplength=WIN_W - pad * 2,
+                        font=FONT_XS, wraplength=WIN_W - pad * 2 - 4,
                         justify="left", anchor="w")
-    orig_lbl.pack(anchor="w", padx=pad, pady=(PAD, PAD_SM))
+    orig_lbl.pack(anchor="w", fill="x", padx=pad, pady=(PAD, PAD_SM))
 
     # Separator
     tk.Frame(inner, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
@@ -312,6 +314,8 @@ def show_translate_popup(original: str, stream_gen) -> None:
     # ── Bottom bar ────────────────────────────────────────────────────────────
     bottom = tk.Frame(inner, bg=BG)
     bottom.pack(fill="x", padx=pad, pady=(PAD_SM, PAD))
+    bottom.grid_columnconfigure(0, weight=1)  # hint label stretches
+    bottom.grid_columnconfigure(1, weight=0)  # copy button fixed width
 
     _full_text = {"value": ""}
 
@@ -329,12 +333,16 @@ def show_translate_popup(original: str, stream_gen) -> None:
         copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
         popup.after(900, close)
 
+    hint_lbl = tk.Label(bottom, text="Esc to close · Ctrl+C to copy",
+                        bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
+    hint_lbl.grid(row=0, column=0, sticky="w", pady=2)
+
     copy_btn = tk.Button(bottom, text="  Copy  ", command=copy_translation,
                          bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
                          font=FONT_BTN, relief="flat", padx=16, pady=6,
                          cursor="hand2", activebackground=BTN_SECONDARY_HOVER,
                          activeforeground=TEXT_C, bd=0)
-    copy_btn.pack(side="right")
+    copy_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
     bind_hover(copy_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
 
     popup.bind("<Escape>", close)
@@ -561,17 +569,20 @@ def open_settings() -> None:
     def entry_row(label, default, show=None):
         ttk.Label(win, text=label).pack(anchor="w", padx=pad_x, pady=(8, 3))
         var = tk.StringVar(value=default)
-        e = tk.Entry(win, textvariable=var, bg=SURFACE, fg=TEXT_C,
+        row_frame = tk.Frame(win, bg=BG)
+        row_frame.pack(padx=pad_x, fill="x")
+        row_frame.grid_columnconfigure(0, weight=1)
+        e = tk.Entry(row_frame, textvariable=var, bg=SURFACE, fg=TEXT_C,
                      insertbackground=TEXT_C, font=FONT_UI, relief="flat",
                      highlightthickness=1, highlightbackground=INPUT_BORDER,
                      highlightcolor=ACCENT, bd=6,
                      show=show or "")
-        e.pack(padx=pad_x, fill="x", ipady=4)
-        return var, e
+        e.grid(row=0, column=0, sticky="ew", ipady=4)
+        return var, e, row_frame
 
-    api_var, api_entry = entry_row("API Key", cfg["api_key"], show="•")
-    url_var, _ = entry_row("Base URL", cfg["base_url"])
-    model_var, _ = entry_row("Model", cfg["model"])
+    api_var, api_entry, api_row = entry_row("API Key", cfg["api_key"], show="•")
+    url_var, _, _ = entry_row("Base URL", cfg["base_url"])
+    model_var, _, _ = entry_row("Model", cfg["model"])
 
     _key_visible = {"v": False}
     def toggle_key():
@@ -579,12 +590,12 @@ def open_settings() -> None:
         api_entry.config(show="" if _key_visible["v"] else "•")
         show_btn.config(text="Hide" if _key_visible["v"] else "Show")
 
-    show_btn = tk.Button(win, text="Show", command=toggle_key,
+    show_btn = tk.Button(api_row, text="Show", command=toggle_key,
                          bg=BTN_SECONDARY_BG, fg=SUBTEXT, font=FONT_XS,
                          relief="flat", padx=10, pady=3, cursor="hand2",
                          activebackground=BTN_SECONDARY_HOVER,
                          activeforeground=TEXT_C, bd=0)
-    show_btn.place(x=w - 80, y=128)
+    show_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
     bind_hover(show_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
 
     # ── Section: Translation ──────────────────────────────────────────────────
@@ -592,7 +603,7 @@ def open_settings() -> None:
         anchor="w", padx=pad_x, pady=(PAD_LG, 4))
     tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(0, 4))
 
-    lang_var, _ = entry_row("Target Language", cfg["target_language"])
+    lang_var, _, _ = entry_row("Target Language", cfg["target_language"])
 
     # Custom prompt
     ttk.Label(win, text="Custom Prompt").pack(anchor="w", padx=pad_x, pady=(8, 3))
@@ -626,6 +637,9 @@ def open_settings() -> None:
 
     btn_frame = tk.Frame(win, bg=BG)
     btn_frame.pack(fill="x", padx=pad_x, pady=(PAD_LG, PAD_LG))
+    btn_frame.grid_columnconfigure(0, weight=1)  # spacer stretches
+    btn_frame.grid_columnconfigure(1, weight=0)  # save button fixed
+    btn_frame.grid_columnconfigure(2, weight=0)  # cancel button fixed
 
     def save_and_close():
         prompt_val = prompt_text.get("1.0", tk.END).strip()
@@ -640,23 +654,23 @@ def open_settings() -> None:
         })
         win.destroy()
 
-    cancel_btn = tk.Button(btn_frame, text="  Cancel  ", command=win.destroy,
-                           bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
-                           font=FONT_BTN, relief="flat",
-                           padx=20, pady=8, cursor="hand2",
-                           activebackground=BTN_SECONDARY_HOVER,
-                           activeforeground=TEXT_C, bd=0)
-    cancel_btn.pack(side="right", padx=(PAD, 0))
-    bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
-
     save_btn = tk.Button(btn_frame, text="  Save changes  ", command=save_and_close,
                          bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
                          font=FONT_BTN_LG, relief="flat",
                          padx=22, pady=8, cursor="hand2",
                          activebackground=BTN_PRIMARY_HOVER,
                          activeforeground=BTN_PRIMARY_FG, bd=0)
-    save_btn.pack(side="right")
+    save_btn.grid(row=0, column=1, sticky="e")
     bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
+
+    cancel_btn = tk.Button(btn_frame, text="  Cancel  ", command=win.destroy,
+                           bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
+                           font=FONT_BTN, relief="flat",
+                           padx=20, pady=8, cursor="hand2",
+                           activebackground=BTN_SECONDARY_HOVER,
+                           activeforeground=TEXT_C, bd=0)
+    cancel_btn.grid(row=0, column=2, sticky="e", padx=(PAD, 0))
+    bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
 
     win.wait_window()
 
