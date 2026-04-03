@@ -318,20 +318,35 @@ def show_translate_popup(original: str, stream_gen) -> None:
     bottom.grid_columnconfigure(1, weight=0)  # copy button fixed width
 
     _full_text = {"value": ""}
+    _copy_reset_id = {"v": None}
+
+    def _reset_copy_btn():
+        """Restore the copy button to its default state."""
+        if not popup.winfo_exists():
+            return
+        copy_btn.config(text="  Copy  ", fg=BTN_SECONDARY_FG, bg=BTN_SECONDARY_BG)
+        bind_hover(copy_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
 
     def copy_translation():
+        # Cancel any pending reset so rapid clicks don't flicker
+        if _copy_reset_id["v"] is not None:
+            try:
+                popup.after_cancel(_copy_reset_id["v"])
+            except (tk.TclError, ValueError):
+                pass
+
         try:
             sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
             if sel:
                 pyperclip.copy(sel)
                 copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
-                popup.after(900, close)
+                _copy_reset_id["v"] = popup.after(1500, _reset_copy_btn)
                 return
         except tk.TclError:
             pass
         pyperclip.copy(_full_text["value"])
         copy_btn.config(text="✓ Copied!", fg=GREEN, bg=BG)
-        popup.after(900, close)
+        _copy_reset_id["v"] = popup.after(1500, _reset_copy_btn)
 
     hint_lbl = tk.Label(bottom, text="Esc to close · Ctrl+C to copy",
                         bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
@@ -553,6 +568,44 @@ def open_settings() -> None:
 
     pad_x = 28
 
+    # ── Bottom buttons (packed FIRST with side='bottom' to reserve space) ────
+    btn_frame = tk.Frame(win, bg=BG)
+    btn_frame.pack(side="bottom", fill="x", padx=pad_x, pady=(PAD, PAD_LG))
+
+    bottom_sep = tk.Frame(win, bg=SURFACE1, height=1)
+    bottom_sep.pack(side="bottom", fill="x", padx=pad_x, pady=0)
+
+    def save_and_close():
+        prompt_val = prompt_text.get("1.0", tk.END).strip()
+        if not prompt_val:
+            prompt_val = DEFAULT_PROMPT
+        update_config({
+            "api_key":         api_var.get().strip(),
+            "base_url":        url_var.get().strip(),
+            "model":           model_var.get().strip() or "gpt-4o-mini",
+            "target_language": lang_var.get().strip(),
+            "custom_prompt":   prompt_val,
+        })
+        win.destroy()
+
+    cancel_btn = tk.Button(btn_frame, text="Cancel", command=win.destroy,
+                           bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
+                           font=FONT_BTN_LG, relief="flat",
+                           padx=24, pady=0, cursor="hand2",
+                           activebackground=BTN_SECONDARY_HOVER,
+                           activeforeground=TEXT_C, bd=0)
+    cancel_btn.pack(side="right", padx=(PAD, 0), ipady=10)
+    bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
+
+    save_btn = tk.Button(btn_frame, text="Save changes", command=save_and_close,
+                         bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
+                         font=FONT_BTN_LG, relief="flat",
+                         padx=24, pady=0, cursor="hand2",
+                         activebackground=BTN_PRIMARY_HOVER,
+                         activeforeground=BTN_PRIMARY_FG, bd=0)
+    save_btn.pack(side="right", ipady=10)
+    bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
+
     # ── Header ────────────────────────────────────────────────────────────────
     hdr = tk.Frame(win, bg=SURFACE, height=52)
     hdr.pack(fill="x")
@@ -630,44 +683,6 @@ def open_settings() -> None:
                           activebackground=BG, activeforeground=TEXT_C, bd=0)
     reset_btn.pack(anchor="w", padx=pad_x, pady=(2, 0))
     bind_hover(reset_btn, BG, BG, ACCENT, SUBTEXT)
-
-    # ── Bottom buttons ────────────────────────────────────────────────────────
-    # Separator above buttons
-    tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(20, 0))
-
-    btn_frame = tk.Frame(win, bg=BG)
-    btn_frame.pack(fill="x", padx=pad_x, pady=(PAD_LG, PAD_LG))
-
-    def save_and_close():
-        prompt_val = prompt_text.get("1.0", tk.END).strip()
-        if not prompt_val:
-            prompt_val = DEFAULT_PROMPT
-        update_config({
-            "api_key":         api_var.get().strip(),
-            "base_url":        url_var.get().strip(),
-            "model":           model_var.get().strip() or "gpt-4o-mini",
-            "target_language": lang_var.get().strip(),
-            "custom_prompt":   prompt_val,
-        })
-        win.destroy()
-
-    cancel_btn = tk.Button(btn_frame, text="  Cancel  ", command=win.destroy,
-                           bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
-                           font=FONT_BTN, relief="flat",
-                           padx=20, pady=8, cursor="hand2",
-                           activebackground=BTN_SECONDARY_HOVER,
-                           activeforeground=TEXT_C, bd=0)
-    cancel_btn.pack(side="right", padx=(PAD, 0))
-    bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
-
-    save_btn = tk.Button(btn_frame, text="  Save changes  ", command=save_and_close,
-                         bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
-                         font=FONT_BTN_LG, relief="flat",
-                         padx=22, pady=8, cursor="hand2",
-                         activebackground=BTN_PRIMARY_HOVER,
-                         activeforeground=BTN_PRIMARY_FG, bd=0)
-    save_btn.pack(side="right")
-    bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
 
     win.wait_window()
 
