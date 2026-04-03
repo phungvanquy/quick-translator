@@ -64,11 +64,22 @@ def update_config(partial: dict) -> None:
 _config = load_config()
 
 # ── OpenAI helpers ────────────────────────────────────────────────────────────
+_client: OpenAI | None = None
+_client_key: tuple | None = None  # (api_key, base_url) used to create _client
+
 def get_client(cfg: dict) -> OpenAI:
-    return OpenAI(
-        api_key=cfg["api_key"],
-        base_url=cfg["base_url"] or "https://api.openai.com/v1",
-    )
+    """Return a reusable OpenAI client, recreated only when credentials change."""
+    global _client, _client_key
+    key = (cfg["api_key"], cfg["base_url"] or "https://api.openai.com/v1")
+    if _client is None or _client_key != key:
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:
+                pass
+        _client = OpenAI(api_key=key[0], base_url=key[1])
+        _client_key = key
+    return _client
 
 def translate_stream(text: str):
     """Yield translation chunks. Yields strings; first may be an error."""
@@ -174,6 +185,8 @@ from constants import (
 # ── Translation popup ─────────────────────────────────────────────────────────
 def _bind_close_outside(popup, close_fn):
     """Close popup when clicking outside it. Returns cleanup function."""
+    _state = {"unbound": False}
+
     def on_click_outside(e=None):
         try:
             if not popup.winfo_exists():
@@ -187,12 +200,22 @@ def _bind_close_outside(popup, close_fn):
                 close_fn()
         except Exception:
             pass
+
     bind_id = popup.bind_all("<Button-1>", on_click_outside, add=True)
+
     def _unbind():
+        if _state["unbound"]:
+            return
+        _state["unbound"] = True
         try:
-            popup.unbind_all("<Button-1>")
-        except Exception:
-            pass
+            popup.unbind_all_by_id("<Button-1>", bind_id)
+        except (AttributeError, Exception):
+            # unbind_all_by_id doesn't exist in older Tk; fall back
+            try:
+                popup.unbind_all("<Button-1>")
+            except Exception:
+                pass
+
     popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
 def show_translate_popup(original: str, stream_gen) -> None:
@@ -208,8 +231,11 @@ def show_translate_popup(original: str, stream_gen) -> None:
     drag_data = {"x": 0, "y": 0}
 
     def close(e=None):
-        try: popup.destroy()
-        except Exception: pass
+        try:
+            _spinner.stop()
+            popup.destroy()
+        except Exception:
+            pass
 
     # ── Outer border frame (1px shadow border) ────────────────────────────────
     border = tk.Frame(popup, bg=BORDER, bd=0)
@@ -379,6 +405,11 @@ def show_translate_popup(original: str, stream_gen) -> None:
                     return
                 popup.after(0, lambda c=chunk: _append_chunk(c))
         finally:
+            # Close the generator to release the OpenAI HTTP stream
+            try:
+                stream_gen.close()
+            except Exception:
+                pass
             if popup.winfo_exists():
                 popup.after(0, _stream_done)
 

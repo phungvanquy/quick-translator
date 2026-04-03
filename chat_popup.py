@@ -208,6 +208,8 @@ def _show_copy_menu(widget: tk.Text, event) -> str:
     menu.add_command(label="Copy",       command=_copy)
     menu.add_command(label="Select all", command=_select_all)
     menu.tk_popup(event.x_root, event.y_root)
+    # Destroy the menu after it's dismissed to avoid accumulating widgets
+    menu.bind("<Unmap>", lambda e: widget.after_idle(menu.destroy))
     return "break"
 
 
@@ -487,6 +489,8 @@ def _force_focus(popup: tk.Toplevel, entry: tk.Entry | None = None):
 
 def _bind_close_outside(popup: tk.Toplevel, close_fn):
     """Close popup when clicking outside it. Cleans up on destroy."""
+    _state = {"unbound": False}
+
     def on_click_outside(e=None):
         try:
             if not popup.winfo_exists():
@@ -500,12 +504,21 @@ def _bind_close_outside(popup: tk.Toplevel, close_fn):
                 close_fn()
         except Exception:
             pass
-    popup.bind_all("<Button-1>", on_click_outside, add=True)
+
+    bind_id = popup.bind_all("<Button-1>", on_click_outside, add=True)
+
     def _unbind():
+        if _state["unbound"]:
+            return
+        _state["unbound"] = True
         try:
-            popup.unbind_all("<Button-1>")
-        except Exception:
-            pass
+            popup.unbind_all_by_id("<Button-1>", bind_id)
+        except (AttributeError, Exception):
+            try:
+                popup.unbind_all("<Button-1>")
+            except Exception:
+                pass
+
     popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
 
@@ -717,16 +730,25 @@ def show_chat_popup(
 
         def do_chat():
             full_reply = []
+            stream = chat_with_context_stream(_ctx["text"], question, chat_history)
             try:
-                for chunk in chat_with_context_stream(_ctx["text"], question, chat_history):
+                for chunk in stream:
                     if not popup.winfo_exists():
                         return
                     full_reply.append(chunk)
                     popup.after(0, lambda c=chunk: handle["append"](c))
             finally:
+                # Close the generator to release the HTTP stream
+                try:
+                    stream.close()
+                except Exception:
+                    pass
                 reply = "".join(full_reply).strip()
                 chat_history.append({"role": "user",      "content": question})
                 chat_history.append({"role": "assistant", "content": reply})
+                # Cap history to last 50 messages to prevent unbounded memory growth
+                if len(chat_history) > 50:
+                    del chat_history[:len(chat_history) - 50]
                 if popup.winfo_exists():
                     popup.after(0, lambda: handle["finish"](reply))
                     popup.after(0, lambda: send_btn.config(

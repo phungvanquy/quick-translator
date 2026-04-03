@@ -154,13 +154,14 @@ class LoadingSpinner:
         self._tick()
 
     def _tick(self):
-        if not self._running:
+        if not self._running or self._widget is None:
             return
         try:
             if not self._widget.winfo_exists():
+                self._cleanup()
                 return
         except tk.TclError:
-            self._running = False
+            self._cleanup()
             return
         self._widget.delete("1.0", tk.END)
         frame = _SPINNER_FRAMES[self._frame_idx % len(_SPINNER_FRAMES)]
@@ -172,7 +173,20 @@ class LoadingSpinner:
         self._running = False
         if self._after_id is not None:
             try:
-                self._widget.after_cancel(self._after_id)
+                if self._widget is not None:
+                    self._widget.after_cancel(self._after_id)
             except (tk.TclError, ValueError):
                 pass
             self._after_id = None
+
+    def _cleanup(self):
+        """Release all references so the widget can be GC'd."""
+        self._running = False
+        if self._after_id is not None:
+            try:
+                if self._widget is not None:
+                    self._widget.after_cancel(self._after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._after_id = None
+        self._widget = None
