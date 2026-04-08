@@ -7,144 +7,18 @@ Right-click tray icon to open Settings or quit.
 
 import threading
 import time
-import json
-import os
 import tkinter as tk
-from tkinter import ttk
+
 import pyperclip
-import keyboard
-from openai import OpenAI
-import pystray
-from PIL import Image, ImageDraw
 
-import sys
+from config import get_config
+from api import translate_stream, chat_with_context_stream
+from settings import open_settings
+from translate_popup import show_translate_popup
+from chat_popup import show_chat_popup as _show_chat_popup
+from hotkeys import register_hotkeys
+from tray import build_tray
 
-from chat_popup import show_chat_popup as _show_chat_popup, _configure_tags, render_markdown_to_text
-
-# ── Config ────────────────────────────────────────────────────────────────────
-CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".quicktranslator_config.json")
-DEFAULT_PROMPT = (
-    "You are a translator. Translate the user's text to {target_language}. "
-    "Reply with ONLY the translation — no explanations, no notes."
-)
-DEFAULT_CONFIG = {
-    "api_key": "",
-    "base_url": "https://api.openai.com/v1",
-    "target_language": "Vietnamese",
-    "model": "gpt-4o-mini",
-    "custom_prompt": DEFAULT_PROMPT,
-}
-
-_config_lock = threading.Lock()
-_config: dict = {}
-
-def load_config() -> dict:
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass  # fall through to defaults
-    save_config(DEFAULT_CONFIG)
-    return DEFAULT_CONFIG.copy()
-
-def save_config(cfg: dict) -> None:
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-
-def get_config() -> dict:
-    with _config_lock:
-        return dict(_config)
-
-def update_config(partial: dict) -> None:
-    with _config_lock:
-        _config.update(partial)
-        save_config(_config)
-
-_config = load_config()
-
-# ── OpenAI helpers ────────────────────────────────────────────────────────────
-_client: OpenAI | None = None
-_client_key: tuple | None = None  # (api_key, base_url) used to create _client
-
-def get_client(cfg: dict) -> OpenAI:
-    """Return a reusable OpenAI client, recreated only when credentials change."""
-    global _client, _client_key
-    key = (cfg["api_key"], cfg["base_url"] or "https://api.openai.com/v1")
-    if _client is None or _client_key != key:
-        if _client is not None:
-            try:
-                _client.close()
-            except Exception:
-                pass
-        _client = OpenAI(api_key=key[0], base_url=key[1])
-        _client_key = key
-    return _client
-
-def translate_stream(text: str):
-    """Yield translation chunks. Yields strings; first may be an error."""
-    cfg = get_config()
-    if not cfg["api_key"]:
-        yield "⚠ No API key set.\nRight-click the tray icon → Settings."
-        return
-    try:
-        prompt = cfg.get("custom_prompt", DEFAULT_PROMPT)
-        try:
-            system_content = prompt.format(target_language=cfg["target_language"])
-        except (KeyError, ValueError):
-            system_content = prompt
-        stream = get_client(cfg).chat.completions.create(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": text},
-            ],
-            max_completion_tokens=1000,
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                yield delta
-    except Exception as e:
-        yield f"⚠ Error: {e}"
-
-def chat_with_context_stream(selected_text: str, user_question: str, history: list):
-    """Yield chat response chunks as strings."""
-    cfg = get_config()
-    if not cfg["api_key"]:
-        yield "⚠ No API key set.\nRight-click the tray icon → Settings."
-        return
-    try:
-        if selected_text:
-            system = (
-                "You are a helpful assistant. The user has selected the following text:\n\n"
-                f"---\n{selected_text}\n---\n\n"
-                "Answer the user's questions about it concisely and clearly. "
-                "You may use Markdown formatting (bold, italic, code blocks, lists) "
-                "where it helps readability."
-            )
-        else:
-            system = (
-                "You are a helpful assistant. Answer concisely and clearly. "
-                "You may use Markdown formatting (bold, italic, code blocks, lists) "
-                "where it helps readability."
-            )
-        messages = [{"role": "system", "content": system}] + history + [
-            {"role": "user", "content": user_question}
-        ]
-        stream = get_client(cfg).chat.completions.create(
-            model=cfg["model"],
-            messages=messages,
-            max_completion_tokens=1000,
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                yield delta
-    except Exception as e:
-        yield f"⚠ Error: {e}"
 
 # ── Clipboard helper ──────────────────────────────────────────────────────────
 def get_clipboard_after_copy(retries: int = 10, interval: float = 0.05) -> str:
@@ -156,9 +30,11 @@ def get_clipboard_after_copy(retries: int = 10, interval: float = 0.05) -> str:
             return current.strip()
     return prev.strip()
 
+
 # ── Single Tk root ────────────────────────────────────────────────────────────
 _tk_root: tk.Tk | None = None
 _tk_lock = threading.Lock()
+
 
 def get_tk_root() -> tk.Tk:
     global _tk_root
@@ -169,234 +45,10 @@ def get_tk_root() -> tk.Tk:
             _tk_root.attributes("-topmost", True)
         return _tk_root
 
+
 def tk_call(fn):
     get_tk_root().after(0, fn)
 
-from constants import (
-    BG, MANTLE, CRUST, SURFACE, SURFACE1, SURFACE2, OVERLAY, MUTED, SUBTEXT, TEXT_C,
-    BLUE, SAPPHIRE, GREEN, RED, BORDER, SHADOW, INPUT_BG, INPUT_BORDER, ACCENT,
-    BTN_PRIMARY_BG, BTN_PRIMARY_FG, BTN_PRIMARY_HOVER,
-    BTN_SECONDARY_BG, BTN_SECONDARY_FG, BTN_SECONDARY_HOVER,
-    FONT_UI, FONT_BOLD, FONT_SM, FONT_XS, FONT_MONO, FONT_BTN, FONT_BTN_LG,
-    PAD_SM, PAD, PAD_LG,
-    bind_hover, fade_in, LoadingSpinner,
-)
-
-# ── Translation popup ─────────────────────────────────────────────────────────
-def _bind_close_outside(popup, close_fn):
-    """Close popup when clicking outside it. Returns cleanup function."""
-    _state = {"unbound": False}
-
-    def on_click_outside(e=None):
-        try:
-            if not popup.winfo_exists():
-                _unbind()
-                return
-            px, py = popup.winfo_rootx(), popup.winfo_rooty()
-            pw, ph = popup.winfo_width(), popup.winfo_height()
-            mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
-            if not (px <= mx <= px + pw and py <= my <= py + ph):
-                _unbind()
-                close_fn()
-        except Exception:
-            pass
-
-    bind_id = popup.bind_all("<Button-1>", on_click_outside, add=True)
-
-    def _unbind():
-        if _state["unbound"]:
-            return
-        _state["unbound"] = True
-        try:
-            popup.unbind_all_by_id("<Button-1>", bind_id)
-        except (AttributeError, Exception):
-            # unbind_all_by_id doesn't exist in older Tk; fall back
-            try:
-                popup.unbind_all("<Button-1>")
-            except Exception:
-                pass
-
-    popup.bind("<Destroy>", lambda e: _unbind(), add=True)
-
-def show_translate_popup(original: str, stream_gen) -> None:
-    """Show translation popup with streaming. stream_gen is a generator yielding chunks."""
-    root = get_tk_root()
-    popup = tk.Toplevel(root)
-    popup.overrideredirect(True)
-    popup.attributes("-topmost", True)
-    popup.configure(bg=SHADOW)  # shadow border trick: 1px dark border via outer bg
-
-    WIN_W = 440
-    pad = PAD_LG
-    drag_data = {"x": 0, "y": 0}
-
-    def close(e=None):
-        try:
-            _spinner.stop()
-            popup.destroy()
-        except Exception:
-            pass
-
-    # ── Outer border frame (1px shadow border) ────────────────────────────────
-    border = tk.Frame(popup, bg=BORDER, bd=0)
-    border.pack(fill="both", expand=True, padx=1, pady=1)
-
-    inner = tk.Frame(border, bg=BG, bd=0)
-    inner.pack(fill="both", expand=True, padx=1, pady=1)
-
-    # ── Header (drag handle) ──────────────────────────────────────────────────
-    header = tk.Frame(inner, bg=SURFACE, padx=PAD, pady=10)
-    header.pack(fill="x")
-    header.grid_columnconfigure(0, weight=1)  # title stretches
-    header.grid_columnconfigure(1, weight=0)  # close button fixed
-
-    def _press(e):
-        drag_data["x"] = e.x_root - popup.winfo_x()
-        drag_data["y"] = e.y_root - popup.winfo_y()
-    def _drag(e):
-        popup.geometry(f"+{e.x_root - drag_data['x']}+{e.y_root - drag_data['y']}")
-
-    header.bind("<Button-1>",  _press)
-    header.bind("<B1-Motion>", _drag)
-
-    cfg = get_config()
-    title_lbl = tk.Label(header, text=f"⟶  {cfg['target_language']}", bg=SURFACE,
-                         fg=SUBTEXT, font=FONT_SM, anchor="w")
-    title_lbl.grid(row=0, column=0, sticky="w")
-    title_lbl.bind("<Button-1>",  _press)
-    title_lbl.bind("<B1-Motion>", _drag)
-
-    close_btn = tk.Button(header, text="✕", command=close, bg=SURFACE, fg=MUTED,
-                          font=FONT_SM, relief="flat", padx=8, pady=2,
-                          cursor="hand2", activebackground=RED,
-                          activeforeground=TEXT_C, bd=0)
-    close_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
-    bind_hover(close_btn, RED, SURFACE, TEXT_C, MUTED)
-
-    # ── Original text (muted, selectable) ─────────────────────────────────────
-    orig_short = original if len(original) < 120 else original[:117] + "…"
-    orig_lbl = tk.Label(inner, text=orig_short, bg=BG, fg=MUTED,
-                        font=FONT_XS, wraplength=WIN_W - pad * 2 - 4,
-                        justify="left", anchor="w")
-    orig_lbl.pack(anchor="w", fill="x", padx=pad, pady=(PAD, PAD_SM))
-
-    # Separator
-    tk.Frame(inner, bg=SURFACE1, height=1).pack(fill="x", padx=pad)
-
-    # ── Translation result (selectable Text widget) ───────────────────────────
-    trans_text = tk.Text(inner, bg=BG, fg=TEXT_C, font=("Segoe UI", 12),
-                         wrap="word", relief="flat", bd=0, padx=pad, pady=10,
-                         highlightthickness=0, cursor="xterm",
-                         selectbackground=OVERLAY, selectforeground=TEXT_C,
-                         inactiveselectbackground=OVERLAY,
-                         height=2, spacing1=2, spacing3=2)
-    _configure_tags(trans_text)
-    trans_text.config(state="normal")
-    trans_text.pack(anchor="w", fill="x", padx=0, pady=(6, 0))
-
-    # Animated loading spinner (replaces static emoji)
-    _spinner = LoadingSpinner(trans_text, label=" Translating\u2026")
-    _spinner.start()
-
-    # Read-only: block edits but allow selection
-    def _block_edits(event):
-        if event.state & 0x4:
-            if event.keysym.lower() in ("a", "c"):
-                return
-            return "break"
-        if event.keysym in ("Left","Right","Up","Down","Home","End",
-                            "Prior","Next","Shift_L","Shift_R",
-                            "Control_L","Control_R"):
-            return
-        return "break"
-    trans_text.bind("<Key>", _block_edits)
-
-    # ── Bottom bar ────────────────────────────────────────────────────────────
-    bottom = tk.Frame(inner, bg=BG)
-    bottom.pack(fill="x", padx=pad, pady=(PAD_SM, PAD))
-
-    _full_text = {"value": ""}
-
-    hint_lbl = tk.Label(bottom, text="Esc to close · Ctrl+C to copy",
-                        bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
-    hint_lbl.pack(side="left")
-
-    popup.bind("<Escape>", close)
-    _bind_close_outside(popup, close)
-
-    # ── Size & position (initial) ────────────────────────────────────────────
-    popup.update_idletasks()
-    x = popup.winfo_pointerx() + 16
-    y = popup.winfo_pointery() + 16
-    sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
-    if x + WIN_W > sw: x = sw - WIN_W - 10
-    if y + 200 > sh: y = sh - 200 - 10
-    popup.geometry(f"{WIN_W}x200+{x}+{y}")
-    popup.focus_force()
-    fade_in(popup, duration_ms=120)
-
-    # ── Resize helper ────────────────────────────────────────────────────────
-    _pos = {"x": x, "y": y}
-
-    def _resize_popup():
-        if not popup.winfo_exists():
-            return
-        popup.update_idletasks()
-        try:
-            dl = trans_text.count("1.0", tk.END, "displaylines")
-            display_lines = int(dl[0]) if dl else 3
-        except (TypeError, IndexError, tk.TclError):
-            display_lines = max(3, int(trans_text.index(tk.END).split(".")[0]))
-        trans_text.config(height=max(2, min(display_lines + 1, 15)))
-        popup.update_idletasks()
-        ph = popup.winfo_reqheight()
-        MIN_H, MAX_H = 140, 520
-        ph = max(MIN_H, min(ph, MAX_H))
-        popup.geometry(f"{WIN_W}x{ph}+{_pos['x']}+{_pos['y']}")
-
-    # ── Stream chunks from background thread ─────────────────────────────────
-    _stream_started = {"v": False}
-
-    def _append_chunk(chunk):
-        if not popup.winfo_exists():
-            return
-        if not _stream_started["v"]:
-            _spinner.stop()
-            trans_text.delete("1.0", tk.END)
-            _stream_started["v"] = True
-        trans_text.insert(tk.END, chunk, "normal")
-        _full_text["value"] += chunk
-        _resize_popup()
-
-    def _stream_done():
-        if not popup.winfo_exists():
-            return
-        full = _full_text["value"].strip()
-        trans_text.delete("1.0", tk.END)
-        render_markdown_to_text(trans_text, full)
-        content = trans_text.get("1.0", tk.END)
-        stripped = content.rstrip("\n")
-        if len(stripped) < len(content) - 1:
-            trans_text.delete(f"1.0 + {len(stripped)}c", tk.END)
-        _full_text["value"] = full
-        _resize_popup()
-
-    def _do_stream():
-        try:
-            for chunk in stream_gen:
-                if not popup.winfo_exists():
-                    return
-                popup.after(0, lambda c=chunk: _append_chunk(c))
-        finally:
-            # Close the generator to release the OpenAI HTTP stream
-            try:
-                stream_gen.close()
-            except Exception:
-                pass
-            if popup.winfo_exists():
-                popup.after(0, _stream_done)
-
-    threading.Thread(target=_do_stream, daemon=True).start()
 
 # ── Chat popup (delegates to chat_popup.py) ───────────────────────────────────
 def show_chat_popup(selected_text: str) -> None:
@@ -404,247 +56,22 @@ def show_chat_popup(selected_text: str) -> None:
         selected_text,
         get_tk_root=get_tk_root,
         chat_with_context_stream=chat_with_context_stream,
-        get_config=get_config,
     )
 
-# ── Hotkey engine ─────────────────────────────────────────────────────────────
-_last_ctrl_c_time = 0.0
-_waiting_for_combo = False
-_last_trigger_time = 0.0
-_trigger_lock  = threading.Lock()
-_combo_timer: threading.Timer | None = None
 
-def _reset_combo():
-    global _waiting_for_combo
-    _waiting_for_combo = False
-
-def on_press(event):
-    global _last_ctrl_c_time, _waiting_for_combo, _last_trigger_time, _combo_timer
-
-    ctrl_held = keyboard.is_pressed("ctrl")
-    now = time.time()
-
-    with _trigger_lock:
-        if now - _last_trigger_time < 0.4:
-            return
-
-    if event.name == "c" and ctrl_held:
-        if _waiting_for_combo and (now - _last_ctrl_c_time < 0.6):
-            if _combo_timer: _combo_timer.cancel()
-            _waiting_for_combo = False
-            with _trigger_lock: _last_trigger_time = now
-            threading.Thread(target=handle_translate, daemon=True).start()
-        else:
-            _last_ctrl_c_time = now
-            _waiting_for_combo = True
-            if _combo_timer: _combo_timer.cancel()
-            _combo_timer = threading.Timer(0.6, _reset_combo)
-            _combo_timer.daemon = True
-            _combo_timer.start()
-
-    elif event.name == "space" and ctrl_held and _waiting_for_combo:
-        if now - _last_ctrl_c_time < 0.6:
-            if _combo_timer: _combo_timer.cancel()
-            _waiting_for_combo = False
-            with _trigger_lock: _last_trigger_time = now
-            threading.Thread(target=handle_chat, daemon=True).start()
-        else:
-            _waiting_for_combo = False
-
-    elif event.name not in ("ctrl", "shift", "alt", "left ctrl", "right ctrl"):
-        _waiting_for_combo = False
-        if _combo_timer: _combo_timer.cancel()
-
-keyboard.on_press(on_press)
-
-# ── Handlers ──────────────────────────────────────────────────────────────
-
+# ── Handlers ──────────────────────────────────────────────────────────────────
 def handle_translate():
     text = get_clipboard_after_copy()
     if text:
         stream = translate_stream(text)
-        tk_call(lambda: show_translate_popup(text, stream))
+        tk_call(lambda: show_translate_popup(text, stream, get_tk_root=get_tk_root))
+
 
 def handle_chat():
     text = get_clipboard_after_copy()
     if text:
         tk_call(lambda: show_chat_popup(text))
 
-# ── System tray ───────────────────────────────────────────────────────────────
-def _app_path(filename: str) -> str:
-    """Resolve a file path that works both from source and PyInstaller bundle."""
-    if getattr(sys, "_MEIPASS", None):
-        return os.path.join(sys._MEIPASS, filename)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-
-def make_icon():
-    # Try to load the proper icon file
-    ico_path = _app_path("icon.ico")
-    png_path = _app_path("icon.png")
-    for path in (ico_path, png_path):
-        if os.path.exists(path):
-            try:
-                return Image.open(path)
-            except Exception:
-                pass
-    # Fallback: generate a simple icon in memory
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse([4, 4, 60, 60], fill=BLUE)
-    d.text((18, 16), "Qt", fill=BG)
-    return img
-
-def build_tray():
-    icon = pystray.Icon("QuickTranslator")
-    icon.icon = make_icon()
-    icon.title = "Quick Translator"
-    icon.menu = pystray.Menu(
-        pystray.MenuItem("Settings", lambda: threading.Thread(
-            target=open_settings, daemon=True).start()),
-        pystray.MenuItem("Quit", lambda: (icon.stop(), os._exit(0))),
-    )
-    icon.run()
-
-# ── Settings window ───────────────────────────────────────────────────────────
-def open_settings() -> None:
-    cfg = get_config()
-    root = get_tk_root()
-    win = tk.Toplevel(root)
-    win.title("Quick Translator — Settings")
-    win.resizable(False, False)
-    win.configure(bg=BG)
-    win.attributes("-topmost", True)
-    w, h = 500, 660
-    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
-
-    style = ttk.Style(win)
-    style.theme_use("clam")
-    style.configure("TLabel", background=BG, foreground=TEXT_C, font=FONT_UI)
-    style.configure("TEntry", fieldbackground=SURFACE, foreground=TEXT_C,
-                    insertcolor=TEXT_C)
-    style.configure("Section.TLabel", background=BG, foreground=SUBTEXT,
-                    font=("Segoe UI", 8, "bold"))
-
-    pad_x = 28
-
-    # ── Bottom buttons (packed FIRST with side='bottom' to reserve space) ────
-    btn_frame = tk.Frame(win, bg=BG)
-    btn_frame.pack(side="bottom", fill="x", padx=pad_x, pady=(PAD, PAD_LG))
-
-    bottom_sep = tk.Frame(win, bg=SURFACE1, height=1)
-    bottom_sep.pack(side="bottom", fill="x", padx=pad_x, pady=0)
-
-    def save_and_close():
-        prompt_val = prompt_text.get("1.0", tk.END).strip()
-        if not prompt_val:
-            prompt_val = DEFAULT_PROMPT
-        update_config({
-            "api_key":         api_var.get().strip(),
-            "base_url":        url_var.get().strip(),
-            "model":           model_var.get().strip() or "gpt-4o-mini",
-            "target_language": lang_var.get().strip(),
-            "custom_prompt":   prompt_val,
-        })
-        win.destroy()
-
-    cancel_btn = tk.Button(btn_frame, text="Cancel", command=win.destroy,
-                           bg=BTN_SECONDARY_BG, fg=BTN_SECONDARY_FG,
-                           font=FONT_BTN_LG, relief="flat",
-                           padx=24, pady=0, cursor="hand2",
-                           activebackground=BTN_SECONDARY_HOVER,
-                           activeforeground=TEXT_C, bd=0)
-    cancel_btn.pack(side="right", padx=(PAD, 0), ipady=10)
-    bind_hover(cancel_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
-
-    save_btn = tk.Button(btn_frame, text="Save changes", command=save_and_close,
-                         bg=BTN_PRIMARY_BG, fg=BTN_PRIMARY_FG,
-                         font=FONT_BTN_LG, relief="flat",
-                         padx=24, pady=0, cursor="hand2",
-                         activebackground=BTN_PRIMARY_HOVER,
-                         activeforeground=BTN_PRIMARY_FG, bd=0)
-    save_btn.pack(side="right", ipady=10)
-    bind_hover(save_btn, BTN_PRIMARY_HOVER, BTN_PRIMARY_BG)
-
-    # ── Header ────────────────────────────────────────────────────────────────
-    hdr = tk.Frame(win, bg=SURFACE, height=52)
-    hdr.pack(fill="x")
-    hdr.pack_propagate(False)
-    tk.Label(hdr, text="Settings", bg=SURFACE, fg=TEXT_C,
-             font=("Segoe UI", 12, "bold"), padx=pad_x).pack(
-                 side="left", fill="y")
-
-    # ── Section: API ──────────────────────────────────────────────────────────
-    ttk.Label(win, text="API CONFIGURATION", style="Section.TLabel").pack(
-        anchor="w", padx=pad_x, pady=(PAD_LG, 4))
-    tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(0, 4))
-
-    def entry_row(label, default, show=None):
-        ttk.Label(win, text=label).pack(anchor="w", padx=pad_x, pady=(8, 3))
-        var = tk.StringVar(value=default)
-        row_frame = tk.Frame(win, bg=BG)
-        row_frame.pack(padx=pad_x, fill="x")
-        row_frame.grid_columnconfigure(0, weight=1)
-        e = tk.Entry(row_frame, textvariable=var, bg=SURFACE, fg=TEXT_C,
-                     insertbackground=TEXT_C, font=FONT_UI, relief="flat",
-                     highlightthickness=1, highlightbackground=INPUT_BORDER,
-                     highlightcolor=ACCENT, bd=6,
-                     show=show or "")
-        e.grid(row=0, column=0, sticky="ew", ipady=4)
-        return var, e, row_frame
-
-    api_var, api_entry, api_row = entry_row("API Key", cfg["api_key"], show="•")
-    url_var, _, _ = entry_row("Base URL", cfg["base_url"])
-    model_var, _, _ = entry_row("Model", cfg["model"])
-
-    _key_visible = {"v": False}
-    def toggle_key():
-        _key_visible["v"] = not _key_visible["v"]
-        api_entry.config(show="" if _key_visible["v"] else "•")
-        show_btn.config(text="Hide" if _key_visible["v"] else "Show")
-
-    show_btn = tk.Button(api_row, text="Show", command=toggle_key,
-                         bg=BTN_SECONDARY_BG, fg=SUBTEXT, font=FONT_XS,
-                         relief="flat", padx=10, pady=3, cursor="hand2",
-                         activebackground=BTN_SECONDARY_HOVER,
-                         activeforeground=TEXT_C, bd=0)
-    show_btn.grid(row=0, column=1, sticky="e", padx=(PAD_SM, 0))
-    bind_hover(show_btn, BTN_SECONDARY_HOVER, BTN_SECONDARY_BG)
-
-    # ── Section: Translation ──────────────────────────────────────────────────
-    ttk.Label(win, text="TRANSLATION", style="Section.TLabel").pack(
-        anchor="w", padx=pad_x, pady=(PAD_LG, 4))
-    tk.Frame(win, bg=SURFACE1, height=1).pack(fill="x", padx=pad_x, pady=(0, 4))
-
-    lang_var, _, _ = entry_row("Target Language", cfg["target_language"])
-
-    # Custom prompt
-    ttk.Label(win, text="Custom Prompt").pack(anchor="w", padx=pad_x, pady=(8, 3))
-    prompt_text = tk.Text(win, bg=SURFACE, fg=TEXT_C,
-                          insertbackground=TEXT_C, font=FONT_UI,
-                          relief="flat", bd=6, height=4, wrap="word",
-                          highlightthickness=1, highlightbackground=INPUT_BORDER,
-                          highlightcolor=ACCENT, selectbackground=OVERLAY,
-                          selectforeground=TEXT_C)
-    prompt_text.pack(padx=pad_x, fill="x")
-    prompt_text.insert("1.0", cfg.get("custom_prompt", DEFAULT_PROMPT))
-
-    hint = tk.Label(win, text="Use {target_language} as placeholder.  Leave blank for default.",
-                    bg=BG, fg=SUBTEXT, font=FONT_XS, anchor="w")
-    hint.pack(anchor="w", padx=pad_x, pady=(3, 0))
-
-    def reset_prompt():
-        prompt_text.delete("1.0", tk.END)
-        prompt_text.insert("1.0", DEFAULT_PROMPT)
-
-    reset_btn = tk.Button(win, text="Reset to default", command=reset_prompt,
-                          bg=BG, fg=SUBTEXT, font=FONT_XS,
-                          relief="flat", padx=0, pady=0, cursor="hand2",
-                          activebackground=BG, activeforeground=TEXT_C, bd=0)
-    reset_btn.pack(anchor="w", padx=pad_x, pady=(2, 0))
-    bind_hover(reset_btn, BG, BG, ACCENT, SUBTEXT)
-
-    win.wait_window()
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -653,13 +80,15 @@ if __name__ == "__main__":
     print(" Ctrl+C+Space → chat about selected text")
     print("Right-click tray icon to configure or quit.")
 
-    get_tk_root()   # initialise hidden root on main thread
+    get_tk_root()  # initialise hidden root on main thread
 
     cfg = get_config()
     if not cfg["api_key"]:
-        threading.Thread(target=open_settings, daemon=True).start()
+        threading.Thread(target=lambda: open_settings(get_tk_root), daemon=True).start()
 
-    tray_thread = threading.Thread(target=build_tray, daemon=True)
+    register_hotkeys(handle_translate, handle_chat)
+
+    tray_thread = threading.Thread(target=lambda: build_tray(get_tk_root), daemon=True)
     tray_thread.start()
 
     get_tk_root().mainloop()

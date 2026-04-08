@@ -4,7 +4,20 @@ Design system inspired by Linear / GitHub dark -- a professional, clean
 dark palette with high-contrast text and subtle accent colours.
 """
 
+import platform
 import tkinter as tk
+
+# -- Platform-aware font family ------------------------------------------------
+_system = platform.system()
+if _system == "Windows":
+    _FONT = "Segoe UI"
+    _MONO = "Consolas"
+elif _system == "Darwin":
+    _FONT = "SF Pro Text"
+    _MONO = "Menlo"
+else:  # Linux / other
+    _FONT = "Noto Sans"
+    _MONO = "Noto Sans Mono"
 
 # -- Colours -------------------------------------------------------------------
 # Base backgrounds -- dark, neutral-cool greys
@@ -61,19 +74,21 @@ BTN_DANGER_FG     = "#f85149"
 BTN_DANGER_HOVER  = "#da3633"
 
 # -- Fonts ---------------------------------------------------------------------
-_FONT     = "Segoe UI"
+# Expose _FONT for one-off font tuples in other modules
+FONT_FAMILY = _FONT
+FONT_MONO_FAMILY = _MONO
 FONT_UI   = (_FONT, 10)
 FONT_BOLD = (_FONT, 10, "bold")
 FONT_ITAL = (_FONT, 10, "italic")
 FONT_BI   = (_FONT, 10, "bold italic")
-FONT_MONO = ("Consolas", 10)
+FONT_MONO = (_MONO, 10)
 FONT_H1   = (_FONT, 14, "bold")
 FONT_H2   = (_FONT, 12, "bold")
 FONT_H3   = (_FONT, 11, "bold")
 FONT_SM   = (_FONT, 9)
 FONT_XS   = (_FONT, 8)
-FONT_BTN  = (_FONT, 9, "bold")     # dedicated button font
-FONT_BTN_LG = (_FONT, 10, "bold")  # larger primary button font
+FONT_BTN  = (_FONT, 9, "bold")
+FONT_BTN_LG = (_FONT, 10, "bold")
 
 WRAP_WIDTH = 440  # px -- wraplength for message labels
 

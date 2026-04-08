@@ -32,6 +32,13 @@ jobs:
           --hidden-import mistune
           --add-data "constants.py;."
           --add-data "chat_popup.py;."
+          --add-data "config.py;."
+          --add-data "api.py;."
+          --add-data "settings.py;."
+          --add-data "utils.py;."
+          --add-data "translate_popup.py;."
+          --add-data "hotkeys.py;."
+          --add-data "tray.py;."
           --add-data "icon.ico;."
           --add-data "icon.png;."
           main.py

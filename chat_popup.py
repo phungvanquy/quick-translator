@@ -20,14 +20,15 @@ import tkinter as tk
 
 import mistune  # pip install mistune
 
+from utils import bind_close_outside, block_edits
 from constants import (
     BG, SURFACE, SURFACE1, SURFACE2, OVERLAY, MUTED, SUBTEXT, TEXT_C as TEXT,
-    BLUE, CYAN, GREEN, YELLOW, RED,
-    MAUVE, CODE_BG, CODE_FG, SCROLLBAR, SAPPHIRE,
+    BLUE, CYAN, RED,
+    MAUVE, CODE_BG, CODE_FG,
     BORDER, SHADOW, USER_BG, AI_BG, INPUT_BG, INPUT_BORDER, ACCENT,
     BTN_PRIMARY_BG, BTN_PRIMARY_FG, BTN_PRIMARY_HOVER,
     FONT_UI, FONT_BOLD, FONT_ITAL, FONT_BI, FONT_MONO, FONT_BTN,
-    FONT_H1, FONT_H2, FONT_H3, FONT_SM, FONT_XS, WRAP_WIDTH,
+    FONT_H1, FONT_H2, FONT_H3, FONT_SM, FONT_XS, FONT_FAMILY,
     PAD_SM, PAD, PAD_LG,
     bind_hover, fade_in, LoadingSpinner,
 )
@@ -60,7 +61,7 @@ def _configure_tags(widget: tk.Text) -> None:
                          font=FONT_UI, foreground=TEXT)
     widget.tag_configure("user_text", font=FONT_UI,   foreground=BLUE)
     widget.tag_configure("ai_label",  font=FONT_BOLD, foreground=MUTED)
-    widget.tag_configure("divider",   font=("Segoe UI", 4))
+    widget.tag_configure("divider",   font=(FONT_FAMILY, 4))
 
 
 _md_parser = mistune.create_markdown(renderer="ast")
@@ -189,7 +190,7 @@ def _show_copy_menu(widget: tk.Text, event) -> str:
     menu = tk.Menu(widget, tearoff=0,
                    bg=SURFACE, fg=TEXT, activebackground=OVERLAY,
                    activeforeground=TEXT, relief="flat", bd=0,
-                   font=("Segoe UI", 9))
+                   font=(FONT_FAMILY, 9))
 
     def _copy():
         try:
@@ -296,7 +297,7 @@ class ScrollableMessageFrame(tk.Frame):
         label_text = "You" if is_user else "AI"
         label_fg   = ACCENT if is_user else MUTED
         tk.Label(outer, text=label_text, bg=BG, fg=label_fg,
-                 font=("Segoe UI", 8, "bold")).pack(
+                 font=(FONT_FAMILY, 8, "bold")).pack(
                      anchor="e" if is_user else "w", pady=(0, 2))
 
         bubble_bg = USER_BG if is_user else AI_BG
@@ -336,24 +337,7 @@ class ScrollableMessageFrame(tk.Frame):
         # insert or delete content, but let selection shortcuts through.
         # Using state="disabled" would block selection entirely, so we stay
         # in state="normal" and intercept keys instead.
-        def _block_edits(event):
-            # Allow copy / select-all / cursor movement / scrolling
-            if event.state & 0x4:          # Ctrl held
-                if event.keysym.lower() in ("a", "c"):
-                    return                 # let Tk handle these natively
-                return "break"             # block all other Ctrl combos
-            # Allow navigation and selection keys
-            if event.keysym in (
-                "Left", "Right", "Up", "Down",
-                "Home", "End", "Prior", "Next",   # Page Up / Down
-                "Shift_L", "Shift_R",
-                "Control_L", "Control_R",
-            ):
-                return
-            # Block everything else (printable chars, Delete, BackSpace…)
-            return "break"
-
-        msg_text.bind("<Key>", _block_edits)
+        msg_text.bind("<Key>", block_edits)
         # Also block right-click paste via the default Tk context menu
         msg_text.bind("<Button-3>", lambda e: _show_copy_menu(msg_text, e))
 
@@ -393,7 +377,7 @@ class ScrollableMessageFrame(tk.Frame):
         outer.pack(fill="x", padx=pad_x, pady=(PAD_SM, 0), anchor="w")
 
         tk.Label(outer, text="AI", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 2))
+                 font=(FONT_FAMILY, 8, "bold")).pack(anchor="w", pady=(0, 2))
 
         msg_text = tk.Text(
             outer, bg=AI_BG, fg=TEXT, font=FONT_UI,
@@ -411,20 +395,7 @@ class ScrollableMessageFrame(tk.Frame):
         _spinner = LoadingSpinner(msg_text)
         _spinner.start()
 
-        def _block_edits(event):
-            if event.state & 0x4:
-                if event.keysym.lower() in ("a", "c"):
-                    return
-                return "break"
-            if event.keysym in (
-                "Left", "Right", "Up", "Down",
-                "Home", "End", "Prior", "Next",
-                "Shift_L", "Shift_R", "Control_L", "Control_R",
-            ):
-                return
-            return "break"
-
-        msg_text.bind("<Key>", _block_edits)
+        msg_text.bind("<Key>", block_edits)
         msg_text.bind("<Button-3>", lambda e: _show_copy_menu(msg_text, e))
         self._bind_mousewheel(msg_text)
         msg_text.pack(fill="x", anchor="w")
@@ -485,41 +456,6 @@ def _force_focus(popup: tk.Toplevel, entry: tk.Entry | None = None):
         pass
 
 
-# ── Shared close-outside binding ─────────────────────────────────────────────
-
-def _bind_close_outside(popup: tk.Toplevel, close_fn):
-    """Close popup when clicking outside it. Cleans up on destroy."""
-    _state = {"unbound": False}
-
-    def on_click_outside(e=None):
-        try:
-            if not popup.winfo_exists():
-                _unbind()
-                return
-            px, py = popup.winfo_rootx(), popup.winfo_rooty()
-            pw, ph = popup.winfo_width(), popup.winfo_height()
-            mx, my = popup.winfo_pointerx(), popup.winfo_pointery()
-            if not (px <= mx <= px + pw and py <= my <= py + ph):
-                _unbind()
-                close_fn()
-        except Exception:
-            pass
-
-    bind_id = popup.bind_all("<Button-1>", on_click_outside, add=True)
-
-    def _unbind():
-        if _state["unbound"]:
-            return
-        _state["unbound"] = True
-        try:
-            popup.unbind_all_by_id("<Button-1>", bind_id)
-        except (AttributeError, Exception):
-            try:
-                popup.unbind_all("<Button-1>")
-            except Exception:
-                pass
-
-    popup.bind("<Destroy>", lambda e: _unbind(), add=True)
 
 
 # ── Chat popup (main entry point) ─────────────────────────────────────────────
@@ -528,7 +464,6 @@ def show_chat_popup(
     selected_text: str,
     get_tk_root,                # callable → tk.Tk hidden root
     chat_with_context_stream,   # callable(text, question, history) → generator of str chunks
-    get_config,                 # callable() → dict snapshot
 ) -> None:
     """
     Open the chat popup as a Toplevel child of the hidden root.
@@ -538,7 +473,6 @@ def show_chat_popup(
     selected_text            : the text the user had selected when they pressed the hotkey
     get_tk_root              : factory for the shared hidden tk.Tk root
     chat_with_context_stream : streaming generator function that calls the OpenAI API
-    get_config               : function that returns a config snapshot dict
     """
     root = get_tk_root()
     popup = tk.Toplevel(root)
@@ -597,7 +531,7 @@ def show_chat_popup(
     header.grid_columnconfigure(1, weight=0)   # close button fixed
 
     header_label = tk.Label(header, text="💬  Chat", bg=SURFACE, fg=TEXT,
-             font=("Segoe UI", 10, "bold"), padx=PAD, anchor="w")
+             font=(FONT_FAMILY, 10, "bold"), padx=PAD, anchor="w")
     header_label.grid(row=0, column=0, sticky="w", pady=10)
 
     close_btn = tk.Button(header, text="✕", command=close,
@@ -639,7 +573,7 @@ def show_chat_popup(
 
     orig_short = selected_text if len(selected_text) < 90 else selected_text[:87] + "…"
     ctx_label = tk.Label(ctx_frame, text=orig_short, bg=BG, fg=MUTED,
-             font=("Segoe UI", 8), wraplength=WIN_W - PAD * 2 - 40,
+             font=(FONT_FAMILY, 8), wraplength=WIN_W - PAD * 2 - 40,
              justify="left", anchor="w")
     ctx_label.grid(row=0, column=0, sticky="ew")
 
@@ -701,7 +635,7 @@ def show_chat_popup(
 
     # ── Resize grip (bottom-right corner) ────────────────────────────────────
     grip = tk.Label(content, text="⠿", bg=BG, fg=MUTED,
-                    font=("Segoe UI", 10), cursor="sizing")
+                    font=(FONT_FAMILY, 10), cursor="sizing")
     grip.place(relx=1.0, rely=1.0, anchor="se", x=-4, y=-4)
 
     _resize = {"x": 0, "y": 0, "w": WIN_W, "h": WIN_H}
@@ -768,23 +702,8 @@ def show_chat_popup(
     send_btn.config(command=send)
     input_entry.bind("<Return>", send)
     popup.bind("<Escape>", close)
-    _bind_close_outside(popup, close)
+    bind_close_outside(popup, close)
 
     # Focus the entry after the window is fully drawn
     popup.after(100, lambda: _force_focus(popup, input_entry))
     popup.after(300, lambda: _force_focus(popup, input_entry))
-
-
-# ── Integration shim ──────────────────────────────────────────────────────────
-# If you are dropping this file alongside the existing main.py, replace the
-# original show_chat_popup with this thin wrapper that imports from here:
-#
-#   from chat_popup import show_chat_popup as _chat_popup
-#
-#   def show_chat_popup(selected_text: str) -> None:
-#       _chat_popup(
-#           selected_text,
-#           get_tk_root=get_tk_root,
-#           chat_with_context=chat_with_context,
-#           get_config=get_config,
-#       )
