@@ -110,17 +110,8 @@ def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
                         bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
     hint_lbl.pack(side="left")
 
-    # 🔊 Read-aloud button — reads selected text, or full translation if nothing selected
-    def _speak_selected():
-        try:
-            sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
-        except tk.TclError:
-            sel = ""
-        text = sel.strip() if sel.strip() else _full_text["value"]
-        if text:
-            speak_text(text)
-
-    speak_btn = tk.Button(bottom, text="🔊", command=_speak_selected,
+    # 🔊 Read-aloud button — reads the original (source) text aloud
+    speak_btn = tk.Button(bottom, text="🔊", command=lambda: speak_text(original),
                           bg=BG, fg=MUTED, font=FONT_SM, relief="flat",
                           padx=6, pady=0, cursor="hand2",
                           activebackground=SURFACE1, activeforeground=TEXT_C, bd=0)
