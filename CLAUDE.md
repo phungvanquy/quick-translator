@@ -26,9 +26,10 @@ Desktop translator & AI chat assistant (Python/Tkinter). Runs in system tray, us
 | `chat_popup.py` | 708 | Chat popup UI, markdown→tk.Text renderer (mistune 3.x AST), scrollable message frame |
 | `hotkeys.py` | 78 | Global hotkey engine (Ctrl+C+C, Ctrl+C+Space) via register_hotkeys() |
 | `tray.py` | 75 | System tray icon, graceful shutdown |
+| `tts.py` | 40 | Offline text-to-speech via pyttsx3 (OS-native engines) |
 | `utils.py` | 58 | Shared UI helpers: bind_close_outside, block_edits |
 | `constants.py` | 207 | Color palette (GitHub dark), platform-aware fonts, padding, UI helpers (bind_hover, fade_in, LoadingSpinner) |
-| `requirements.txt` | — | openai, keyboard, pyperclip, pystray, Pillow, mistune |
+| `requirements.txt` | — | openai, keyboard, pyperclip, pystray, Pillow, mistune, pyttsx3 |
 | `installer.iss` | — | Inno Setup script for Windows installer |
 
 ## Key Patterns

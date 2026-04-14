@@ -13,6 +13,7 @@ from constants import (
     bind_hover, fade_in, LoadingSpinner,
 )
 from chat_popup import _configure_tags, render_markdown_to_text
+from tts import speak_text
 
 
 def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
@@ -107,6 +108,14 @@ def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
     hint_lbl = tk.Label(bottom, text="Esc to close · Ctrl+C to copy",
                         bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
     hint_lbl.pack(side="left")
+
+    # 🔊 Read-aloud button
+    speak_btn = tk.Button(bottom, text="🔊", command=lambda: speak_text(_full_text["value"]),
+                          bg=BG, fg=MUTED, font=FONT_SM, relief="flat",
+                          padx=6, pady=0, cursor="hand2",
+                          activebackground=SURFACE1, activeforeground=TEXT_C, bd=0)
+    speak_btn.pack(side="right")
+    bind_hover(speak_btn, SURFACE1, BG, TEXT_C, MUTED)
 
     popup.bind("<Escape>", close)
     bind_close_outside(popup, close)

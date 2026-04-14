@@ -39,6 +39,7 @@ jobs:
           --add-data "translate_popup.py;."
           --add-data "hotkeys.py;."
           --add-data "tray.py;."
+          --add-data "tts.py;."
           --add-data "icon.ico;."
           --add-data "icon.png;."
           main.py
