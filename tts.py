@@ -4,38 +4,46 @@ import threading
 
 import pyttsx3
 
-# Module-level lock to prevent overlapping speech
 _lock = threading.Lock()
-_stop_event = threading.Event()
+_engine_ref: pyttsx3.Engine | None = None
+_engine_lock = threading.Lock()
 
 
 def speak_text(text: str) -> None:
     """Speak *text* aloud in a background thread (non-blocking).
 
-    If speech is already in progress, the previous utterance is interrupted
-    and the new one starts.
+    If speech is already in progress, it is stopped first.
     """
-    _stop_event.set()  # signal any running speech to stop
+    stop_speaking()
 
     def _speak():
-        _stop_event.clear()
+        global _engine_ref
         if not _lock.acquire(timeout=2):
             return
         try:
             engine = pyttsx3.init()
             engine.setProperty("rate", 160)
             engine.setProperty("volume", 0.9)
+            with _engine_lock:
+                _engine_ref = engine
             engine.say(text)
             engine.runAndWait()
-            engine.stop()
         except Exception:
             pass
         finally:
+            with _engine_lock:
+                _engine_ref = None
             _lock.release()
 
     threading.Thread(target=_speak, daemon=True).start()
 
 
 def stop_speaking() -> None:
-    """Signal any in-progress speech to stop."""
-    _stop_event.set()
+    """Stop any in-progress speech immediately."""
+    with _engine_lock:
+        engine = _engine_ref
+    if engine is not None:
+        try:
+            engine.stop()
+        except Exception:
+            pass

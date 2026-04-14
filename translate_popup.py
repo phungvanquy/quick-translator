@@ -13,7 +13,7 @@ from constants import (
     bind_hover, fade_in, LoadingSpinner,
 )
 from chat_popup import _configure_tags, render_markdown_to_text
-from tts import speak_text
+from tts import speak_text, stop_speaking
 
 
 def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
@@ -30,6 +30,7 @@ def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
 
     def close(e=None):
         try:
+            stop_speaking()
             _spinner.stop()
             popup.destroy()
         except Exception:
@@ -109,8 +110,17 @@ def show_translate_popup(original: str, stream_gen, get_tk_root=None) -> None:
                         bg=BG, fg=MUTED, font=FONT_XS, anchor="w")
     hint_lbl.pack(side="left")
 
-    # 🔊 Read-aloud button
-    speak_btn = tk.Button(bottom, text="🔊", command=lambda: speak_text(_full_text["value"]),
+    # 🔊 Read-aloud button — reads selected text, or full translation if nothing selected
+    def _speak_selected():
+        try:
+            sel = trans_text.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            sel = ""
+        text = sel.strip() if sel.strip() else _full_text["value"]
+        if text:
+            speak_text(text)
+
+    speak_btn = tk.Button(bottom, text="🔊", command=_speak_selected,
                           bg=BG, fg=MUTED, font=FONT_SM, relief="flat",
                           padx=6, pady=0, cursor="hand2",
                           activebackground=SURFACE1, activeforeground=TEXT_C, bd=0)
