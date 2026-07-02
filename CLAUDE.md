@@ -56,6 +56,8 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 ## Python Reference Implementation (Stages 2–3 reference)
 
 > The Python source files below are NOT the active build — they are the behavioral reference for completing the Rust rewrite in Stages 2 and 3. The active CI build is `build.yml` (Tauri/Rust).
+>
+> **Location:** all Python sources, `icon.ico`/`icon.png`, `installer.iss`, and `requirements.txt` live under `python-reference/`. Module paths in the tables below are relative to that directory (e.g. `python-reference/main.py`). Imports are flat/sibling, so run the app with `python-reference/` as the working directory (`cd python-reference && python main.py`).
 
 ## Python Build Notes (reference only — CI no longer uses this)
 - PyInstaller builds standalone `.exe` (with `--uac-admin` for global hotkeys)

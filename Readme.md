@@ -2,6 +2,8 @@
 
 Lightweight desktop translator & AI chat assistant. Highlight any text, press a hotkey, get results instantly.
 
+> **Note:** The project is being rewritten to Rust + Tauri 2.x (active build under `src-tauri/` + `frontend/`, built by CI in `.github/workflows/build.yml`). The original Python/Tkinter implementation described below now lives under `python-reference/` and serves as the behavioral reference for the remaining rewrite stages.
+
 ## Features
 
 - **Ctrl+C+C** — Translate selected text in a popup near your cursor
@@ -11,9 +13,10 @@ Lightweight desktop translator & AI chat assistant. Highlight any text, press a 
 - **System tray** — Runs silently; right-click the tray icon for Settings or Quit
 - **Dark theme** — Catppuccin Mocha palette with hover effects throughout
 
-## Setup
+## Setup (Python reference)
 
 ```bash
+cd python-reference
 pip install -r requirements.txt
 python main.py
 ```
@@ -36,9 +39,10 @@ On first launch, the Settings window opens automatically so you can enter your A
 
 Settings are saved to `~/.quicktranslator_config.json` and applied immediately — no restart needed.
 
-## Build as .exe
+## Build as .exe (Python reference)
 
 ```bash
+cd python-reference
 pip install pyinstaller
 pyinstaller --onefile --noconsole --uac-admin --name QuickTranslator --hidden-import pystray._win32 --hidden-import mistune --add-data "constants.py;." --add-data "chat_popup.py;." main.py
 ```
@@ -47,13 +51,13 @@ The `.exe` will be in the `dist/` folder.
 
 ### Windows Installer
 
-An Inno Setup script (`installer.iss`) is included to build a proper Windows installer with:
+An Inno Setup script (`python-reference/installer.iss`) is included to build a proper Windows installer with:
 - Start Menu & Desktop shortcuts
 - Optional auto-start with Windows
 - Admin elevation (required for global hotkeys)
 - Uninstaller
 
-The GitHub Actions workflow builds both the standalone `.exe` and the installer automatically on push.
+> The current GitHub Actions workflow builds the **Tauri/Rust** app (`.exe` + NSIS installer), not this Python one.
 
 ## How it works
 
