@@ -126,8 +126,10 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
     let mut stream = resp.bytes_stream();
     let mut line_buf = String::new();
 
-    while let Some(chunk_result) =
-        match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+    loop {
+        // Bound each read: if no data arrives within the idle window, treat the
+        // connection as hung and surface an error instead of spinning forever.
+        let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
             Ok(next) => next,
             Err(_) => {
                 let _ = window.emit(
@@ -136,8 +138,13 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
                 );
                 break;
             }
-        }
-    {
+        };
+
+        let chunk_result = match next {
+            Some(c) => c,
+            None => break, // stream ended
+        };
+
         let bytes = match chunk_result {
             Ok(b) => b,
             Err(e) => {
