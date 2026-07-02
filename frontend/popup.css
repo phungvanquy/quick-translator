@@ -1,0 +1,128 @@
+/* popup.css — translation popup styles */
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--shadow);  /* 1px shadow border trick via body bg */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Outer wrapper — 1px border effect */
+body > * {
+  /* children sit on the inner surface */
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.lang-label {
+  font-size: 12px;
+  color: var(--subtext);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-left: 8px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.close-btn:hover {
+  background: var(--red);
+  color: var(--text);
+}
+
+.original {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 8px 18px 6px 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.separator {
+  height: 1px;
+  background: var(--surface1);
+  margin: 0 18px;
+  flex-shrink: 0;
+}
+
+.result-area {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 10px 18px 8px 18px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.spinner {
+  display: flex;
+  align-items: center;
+  color: var(--subtext);
+  font-size: 13px;
+}
+
+.spinner-icon {
+  font-size: 14px;
+  margin-right: 2px;
+}
+
+.spinner-label {
+  color: var(--subtext);
+}
+
+.translation-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  cursor: text;
+}
+
+.footer {
+  background: var(--bg);
+  padding: 4px 18px 6px 18px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--muted);
+}

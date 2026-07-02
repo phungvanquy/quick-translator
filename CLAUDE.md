@@ -1,18 +1,62 @@
 # Quick Translator — Project Memory
 
 ## Overview
-Desktop translator & AI chat assistant (Python/Tkinter). Runs in system tray, uses global hotkeys to translate or chat about selected text via OpenAI-compatible APIs.
+Desktop translator & AI chat assistant. Currently implemented in Python/Tkinter (reference implementation). Being rewritten to Rust + Tauri 2.x in stages — see "Rust/Tauri Rewrite" section below.
 
-## Build & Deployment
-- **NOT built locally** — Uses GitHub Actions workflow (`.github/workflows/build.yml`)
-- Workflow triggers on push to main/master or manual dispatch
-- Runs on `windows-latest`, Python 3.11
+## Staged Rewrite Plan
+
+The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smaller binary, lower idle footprint, and compile-time safety. The Python source files remain in the repo as the **behavioral reference** for Stages 2–3.
+
+| Stage | Scope | Status |
+|---|---|---|
+| **Stage 1** | Translate flow vertical slice: tray, Ctrl+C+C hotkey, clipboard, streaming translation popup, settings, CI | Implemented in `src-tauri/` + `frontend/` |
+| **Stage 2** | Chat popup, Ctrl+C+Space hotkey, markdown rendering in popup | Pending |
+| **Stage 3** | TTS/read-aloud, full settings UI, language auto-detect, history/log | Pending |
+
+## Rust/Tauri Stage-1 Architecture
+
+### Tech stack
+- **Backend**: Rust, Tauri 2.x, tokio async runtime
+- **Frontend**: Plain static HTML/CSS/JS (no JS build step), served from `frontend/`
+- **CI**: `windows-latest`, Rust stable toolchain, `cargo tauri build`, NSIS installer
+
+### Module map (`src-tauri/src/`)
+
+| Module | Responsibility |
+|---|---|
+| `main.rs` | Bootstrap: config load, tray icon, rdev listener spawn, Tauri commands, entry point |
+| `config.rs` | `Config` struct, load/save (~/.quicktranslator_config.json), `ConfigState` (Mutex) |
+| `hotkey.rs` | rdev passive listener: Ctrl+C+C state machine + cursor-position tracking |
+| `clipboard.rs` | `get_clipboard_after_copy`: polls arboard ≤10× @50ms for changed clipboard text |
+| `api.rs` | reqwest + SSE streaming to chat/completions, emits `translate://chunk`/`translate://done` |
+| `windows.rs` | Create/show translate popup and settings `WebviewWindow` |
+
+### Frontend layout (`frontend/`)
+
+| File | Purpose |
+|---|---|
+| `theme.css` | GitHub-dark CSS variables (ported from constants.py) |
+| `popup.html/css/js` | Frameless translate popup: draggable header, spinner, streaming text, Esc+blur close |
+| `settings.html/css/js` | Settings form: api_key, base_url, model, target_language |
+
+### Key design decisions
+- `rdev::listen` (passive, single thread) for both Ctrl+C+C detection and cursor tracking — NOT the Tauri global-shortcut plugin (cannot express double-tap)
+- `arboard` for clipboard polling
+- `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url support
+- Admin elevation via `src-tauri/app.manifest` (`requireAdministrator`) embedded by `winres` in `build.rs`
+- Config format identical to Python app — `~/.quicktranslator_config.json` is interoperable
+
+---
+
+## Python Reference Implementation (Stages 2–3 reference)
+
+> The Python source files below are NOT the active build — they are the behavioral reference for completing the Rust rewrite in Stages 2 and 3. The active CI build is `build.yml` (Tauri/Rust).
+
+## Python Build Notes (reference only — CI no longer uses this)
 - PyInstaller builds standalone `.exe` (with `--uac-admin` for global hotkeys)
 - Inno Setup (`iscc installer.iss`) builds Windows installer
-- Artifacts uploaded: `QuickTranslator-Windows` (.exe) and `QuickTranslator-Setup` (installer)
-- Retention: 30 days
 - `--add-data` bundles all `.py` modules + `icon.ico` + `icon.png` alongside the exe
-- **When adding a new `.py` module, you MUST add a corresponding `--add-data` line in `build.yml`**
+- **When adding a new `.py` module, you MUST add a corresponding `--add-data` line in `build.yml`** (no longer applicable to current CI)
 
 ## Architecture (after refactoring)
 

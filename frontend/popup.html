@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Translation</title>
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- Header: drag region + language label + close button -->
+  <div class="header" data-tauri-drag-region>
+    <span class="lang-label" id="lang-label" data-tauri-drag-region>⟶ Vietnamese</span>
+    <button class="close-btn" id="close-btn" title="Close (Esc)">✕</button>
+  </div>
+
+  <!-- Original text (muted, truncated) -->
+  <div class="original" id="original-text"></div>
+
+  <!-- Separator -->
+  <div class="separator"></div>
+
+  <!-- Translation result area -->
+  <div class="result-area" id="result-area">
+    <!-- Spinner shown until first chunk arrives -->
+    <div class="spinner" id="spinner">
+      <span class="spinner-icon" id="spinner-icon">⠋</span>
+      <span class="spinner-label"> Translating…</span>
+    </div>
+    <!-- Translation output (hidden until first chunk) -->
+    <div class="translation-text" id="translation-text" style="display:none"></div>
+  </div>
+
+  <!-- Footer hint -->
+  <div class="footer">
+    <span class="hint">Esc to close</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

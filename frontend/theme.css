@@ -1,0 +1,64 @@
+/* GitHub-dark palette ported from constants.py */
+:root {
+  --bg:        #0d1117;
+  --mantle:    #010409;
+  --surface:   #161b22;
+  --surface1:  #21262d;
+  --surface2:  #30363d;
+  --overlay:   #21262d;
+  --overlay1:  #30363d;
+  --muted:     #484f58;
+  --subtext:   #8b949e;
+  --text:      #e6edf3;
+  --blue:      #58a6ff;
+  --cyan:      #56d4dd;
+  --green:     #3fb950;
+  --yellow:    #d29922;
+  --red:       #f85149;
+  --border:    #21262d;
+  --shadow:    #010409;
+  --scrollbar: #30363d;
+  --input-bg:  #0d1117;
+  --input-border: #30363d;
+  --btn-primary-bg:    #238636;
+  --btn-primary-fg:    #ffffff;
+  --btn-primary-hover: #2ea043;
+  --btn-secondary-bg:  #21262d;
+  --btn-secondary-fg:  #c9d1d9;
+  --btn-secondary-hover: #30363d;
+  --font-family: 'Segoe UI', 'SF Pro Text', 'Noto Sans', sans-serif;
+  --font-mono:   'Consolas', 'Menlo', 'Noto Sans Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+}

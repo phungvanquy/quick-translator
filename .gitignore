@@ -5,3 +5,6 @@ build/
 dist/
 *.spec
 .env
+
+# Rust / Tauri build artifacts
+src-tauri/target/
