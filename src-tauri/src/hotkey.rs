@@ -6,6 +6,11 @@
 //!   - 0.4s debounce after trigger fires
 //!   - Any non-modifier / non-combo key clears armed state
 //!
+//! Ctrl state is queried live (GetAsyncKeyState on Windows), mirroring the
+//! Python `keyboard.is_pressed("ctrl")` approach — this avoids the desync bug
+//! where a missed KeyRelease event would leave a tracked `ctrl_held` flag
+//! stuck true (e.g. when focus moves to an elevated window mid-combo).
+//!
 //! Also tracks the cursor position via MouseMove events, storing it in
 //! LAST_CURSOR_POS (in main.rs) for use when opening the popup.
 //!
@@ -14,14 +19,34 @@
 
 use rdev::{listen, Event, EventType, Key};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
+
+// ── Live Ctrl-key query ─────────────────────────────────────────────────────
+// Parity with keyboard.is_pressed("ctrl"): read the real OS key state at the
+// instant a key is pressed, instead of tracking press/release ourselves.
+
+#[cfg(target_os = "windows")]
+fn ctrl_is_down() -> bool {
+    // VK_CONTROL = 0x11. GetAsyncKeyState's high bit (0x8000) = key currently down.
+    const VK_CONTROL: i32 = 0x11;
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(vkey: i32) -> i16;
+    }
+    (unsafe { GetAsyncKeyState(VK_CONTROL) } as u16 & 0x8000) != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ctrl_is_down() -> bool {
+    // Non-Windows builds are for CI/type-checking only (the app targets Windows).
+    // Fall back to the tracked flag via thread-local isn't needed here; report false.
+    false
+}
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
 struct HotkeyState {
-    ctrl_held: bool,
     armed: bool,
     last_ctrl_c_time: Option<Instant>,
     last_trigger_time: Option<Instant>,
@@ -30,7 +55,6 @@ struct HotkeyState {
 impl HotkeyState {
     fn new() -> Self {
         HotkeyState {
-            ctrl_held: false,
             armed: false,
             last_ctrl_c_time: None,
             last_trigger_time: None,
@@ -59,62 +83,37 @@ fn is_modifier_or_combo(key: &Key) -> bool {
 // ── Spawn the single rdev listener thread ────────────────────────────────────
 
 /// Spawn the background keyboard + cursor listener.
-/// Returns a shutdown flag (set to true to signal exit intent).
-/// Note: rdev::listen cannot be forcibly stopped from within a callback —
-/// the thread will exit cleanly when the process exits (via app.exit(0)).
-pub fn spawn_hotkey_listener(app: AppHandle) -> Arc<AtomicBool> {
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_clone = shutdown.clone();
-
+///
+/// rdev::listen cannot be forcibly stopped from within a callback — the thread
+/// exits cleanly when the process exits (via app.exit(0) from the tray).
+pub fn spawn_hotkey_listener(app: AppHandle) {
     std::thread::Builder::new()
         .name("rdev-listener".into())
         .spawn(move || {
             let state = Arc::new(Mutex::new(HotkeyState::new()));
-            let shutdown_flag = shutdown_clone;
 
-            let _ = listen(move |event: Event| {
-                if shutdown_flag.load(Ordering::Relaxed) {
-                    return;
+            let _ = listen(move |event: Event| match event.event_type {
+                EventType::MouseMove { x, y } => {
+                    *crate::LAST_CURSOR_POS.lock().unwrap() = (x, y);
                 }
-
-                match event.event_type {
-                    EventType::MouseMove { x, y } => {
-                        *crate::LAST_CURSOR_POS.lock().unwrap() = (x, y);
-                    }
-                    EventType::KeyPress(key) => {
-                        on_key_press(key, &state, &app);
-                    }
-                    EventType::KeyRelease(key) => {
-                        on_key_release(key, &state);
-                    }
-                    _ => {}
+                EventType::KeyPress(key) => {
+                    on_key_press(key, &state, &app);
                 }
+                _ => {}
             });
         })
         .expect("failed to spawn rdev-listener thread");
-
-    shutdown
-}
-
-// ── Key release handler ───────────────────────────────────────────────────────
-
-fn on_key_release(key: Key, state: &Arc<Mutex<HotkeyState>>) {
-    if matches!(key, Key::ControlLeft | Key::ControlRight) {
-        state.lock().unwrap().ctrl_held = false;
-    }
 }
 
 // ── Key press handler ─────────────────────────────────────────────────────────
 
 fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
-    let now = Instant::now();
-
-    // Update ctrl held state first
+    // Ctrl press itself never arms/fires or resets — just wait for the C.
     if matches!(key, Key::ControlLeft | Key::ControlRight) {
-        state.lock().unwrap().ctrl_held = true;
         return;
     }
 
+    let now = Instant::now();
     let mut s = state.lock().unwrap();
 
     // Debounce: ignore everything within 0.4s of last trigger
@@ -124,7 +123,7 @@ fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
         }
     }
 
-    if key == Key::KeyC && s.ctrl_held {
+    if key == Key::KeyC && ctrl_is_down() {
         // Ctrl+C pressed
         if s.armed {
             if let Some(arm_time) = s.last_ctrl_c_time {
@@ -148,13 +147,11 @@ fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
         s.last_ctrl_c_time = Some(now);
         drop(s);
 
-        // Schedule reset after 0.6s
+        // Schedule reset after 0.6s — only clears if no newer Ctrl+C arrived
         let state_clone = state.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(600));
             let mut st = state_clone.lock().unwrap();
-            // Only clear if the arm event we just set is still the latest one
-            // (i.e., no newer Ctrl+C arrived)
             if let Some(arm_time) = st.last_ctrl_c_time {
                 if arm_time.elapsed() >= Duration::from_millis(600) {
                     st.armed = false;

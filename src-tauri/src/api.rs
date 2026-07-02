@@ -7,9 +7,17 @@
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
+use std::time::Duration;
 use tauri::{Emitter, WebviewWindow};
 
 use crate::config::Config;
+
+// Connection must establish within this window, or we surface an error instead
+// of spinning forever. The overall request is NOT capped (streaming responses
+// are long-lived); instead each stream read is bounded by STREAM_IDLE_TIMEOUT.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+// Max gap between streamed chunks before we treat the connection as hung.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ── SSE parsing helpers ───────────────────────────────────────────────────────
 
@@ -73,6 +81,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
     // Send request
     let client = match reqwest::Client::builder()
         .use_rustls_tls()
+        .connect_timeout(CONNECT_TIMEOUT)
         .build()
     {
         Ok(c) => c,
@@ -117,7 +126,18 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
     let mut stream = resp.bytes_stream();
     let mut line_buf = String::new();
 
-    while let Some(chunk_result) = stream.next().await {
+    while let Some(chunk_result) =
+        match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+            Ok(next) => next,
+            Err(_) => {
+                let _ = window.emit(
+                    "translate://chunk",
+                    "⚠ Error: response timed out (no data for 60s)",
+                );
+                break;
+            }
+        }
+    {
         let bytes = match chunk_result {
             Ok(b) => b,
             Err(e) => {

@@ -4,7 +4,7 @@
 
 // Access Tauri 2 APIs from the globally injected object (withGlobalTauri: true)
 const { getCurrentWindow } = window.__TAURI__.window;
-const { listen } = window.__TAURI__.event;
+const { listen, emit } = window.__TAURI__.event;
 
 // ── Parse query string parameters ─────────────────────────────────────────────
 function getParams() {
@@ -104,15 +104,25 @@ async function init() {
     }
   });
 
-  // Click outside (blur) to close — fires when window loses focus
+  // Click outside (blur) to close — but only after the popup has actually
+  // gained focus at least once. Otherwise a window that never grabbed focus
+  // (or a spurious initial "unfocused" event) would close the popup instantly.
+  let hasFocused = false;
   await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (!focused) {
+    if (focused) {
+      hasFocused = true;
+    } else if (hasFocused) {
       closePopup();
     }
   });
 
   // Close button
   closeBtn.addEventListener('click', () => closePopup());
+
+  // Signal the backend that our listeners are attached and it may start
+  // streaming. Tauri events are not buffered, so the backend waits for this
+  // before emitting translate://chunk (see handle_translate_trigger).
+  await emit('popup://ready');
 }
 
 init().catch(console.error);

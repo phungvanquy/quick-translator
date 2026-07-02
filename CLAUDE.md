@@ -45,6 +45,11 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 - `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url support
 - Admin elevation via `src-tauri/app.manifest` (`requireAdministrator`) embedded by `winres` in `build.rs`
 - Config format identical to Python app — `~/.quicktranslator_config.json` is interoperable
+- Live Ctrl-key state via `GetAsyncKeyState` (Windows) in the hotkey handler — parity with Python `keyboard.is_pressed`, avoids stuck-`ctrl_held` desync from a missed KeyRelease
+- Popup streaming uses a `popup://ready` handshake (frontend emits after listeners attach; backend waits with a 2s fallback before streaming) — Tauri events are not buffered, so a fixed sleep dropped early chunks
+- Tray icon is owned solely by the code (`TrayIconBuilder` in `main.rs`); `tauri.conf.json` must NOT declare `app.trayIcon` or two icons appear (only the code one has a menu)
+- Popup blur-to-close only fires after the window has gained focus once (built with `.focused(true)`) — prevents an instant close when the window never grabs focus
+- `api.rs` uses a connect timeout + per-chunk stream idle timeout so a hung server surfaces an error instead of an eternal spinner
 
 ---
 

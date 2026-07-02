@@ -70,6 +70,7 @@ pub fn show_translate_popup(
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
+        .focused(true)
         .visible(true)
         .build()
         .map_err(|e| format!("failed to create popup: {e}"))?;

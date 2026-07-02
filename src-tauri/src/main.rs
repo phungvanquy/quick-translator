@@ -13,7 +13,7 @@ use config::{Config, ConfigState, ConfigUpdate};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager,
+    AppHandle, Listener, Manager,
 };
 
 // ── Shared cursor position ────────────────────────────────────────────────────
@@ -61,14 +61,29 @@ pub async fn handle_translate_trigger(app: AppHandle) {
 
     let (cx, cy) = *LAST_CURSOR_POS.lock().unwrap();
 
+    // Register the readiness listener BEFORE creating the popup, so we can't
+    // miss the popup://ready event the webview emits once its listeners are up.
+    // Tauri events are not buffered — without this handshake, streaming chunks
+    // emitted before the webview attaches its listeners would be lost.
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let ready_tx = std::sync::Mutex::new(Some(ready_tx));
+    let ready_handler = app.once_any("popup://ready", move |_event| {
+        if let Some(tx) = ready_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+    });
+
     // Create the popup window
     if let Err(e) = windows::show_translate_popup(&app, &text, &cfg.target_language, cx, cy) {
         eprintln!("popup error: {e}");
+        app.unlisten(ready_handler);
         return;
     }
 
-    // Give the webview time to initialise before streaming
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Wait for the webview to signal it has attached its event listeners.
+    // Fall back to a fixed timeout if the ready signal never arrives.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), ready_rx).await;
+    app.unlisten(ready_handler);
 
     let popup_window = match app.get_webview_window("translate-popup") {
         Some(w) => w,
