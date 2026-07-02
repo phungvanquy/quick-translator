@@ -1,19 +1,16 @@
 fn main() {
-    // Embed the Windows application manifest (requireAdministrator elevation).
-    // Only compiled when targeting Windows.
+    // On Windows, feed our app.manifest (requireAdministrator elevation) into
+    // Tauri's own resource compilation instead of embedding a second resource
+    // via winres — two resource compilers both emit a VERSION resource, which
+    // makes link.exe fail with CVT1100 "duplicate resource".
     #[cfg(target_os = "windows")]
-    embed_manifest();
-
-    tauri_build::build()
-}
-
-#[cfg(target_os = "windows")]
-fn embed_manifest() {
-    let mut res = winres::WindowsResource::new();
-    res.set_manifest_file("app.manifest");
-    if let Err(e) = res.compile() {
-        // Non-fatal: manifest embedding failure won't break the build,
-        // but elevation won't work without it.
-        eprintln!("cargo:warning=Could not embed app.manifest: {e}");
+    {
+        let windows = tauri_build::WindowsAttributes::new()
+            .app_manifest(include_str!("app.manifest"));
+        let attributes = tauri_build::Attributes::new().windows_attributes(windows);
+        tauri_build::try_build(attributes).expect("failed to run tauri-build");
     }
+
+    #[cfg(not(target_os = "windows"))]
+    tauri_build::build();
 }
