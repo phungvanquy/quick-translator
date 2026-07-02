@@ -179,6 +179,17 @@ fn main() {
             update_config,
             open_settings_cmd
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Tray app: having no open windows is normal, so closing the last
+            // popup/settings window must NOT quit the process. ExitRequested
+            // fires with code == None on window-close (prevent it) and with
+            // Some(_) only when we call app.exit() from the tray Quit item.
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

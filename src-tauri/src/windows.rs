@@ -1,13 +1,16 @@
 //! Window management — create/show translation popup and settings windows.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 
 // ── Translation popup ─────────────────────────────────────────────────────────
 
 /// Create and show the translation popup near the cursor.
 /// `original`: captured text (may be truncated in HTML layer)
 /// `target_language`: shown in the popup header
-/// `cursor_x`, `cursor_y`: current cursor position in screen coordinates
+/// `cursor_x`, `cursor_y`: current cursor position in PHYSICAL screen pixels
+///   (rdev reports physical pixels; Tauri's builder `position()` expects logical
+///   pixels, so we instead build the window hidden and position it afterwards
+///   with `set_position(PhysicalPosition)` — correct on any DPI scale).
 ///
 /// If original is empty, does nothing.
 pub fn show_translate_popup(
@@ -28,52 +31,69 @@ pub fn show_translate_popup(
 
     let popup_w: f64 = 460.0;
     let popup_h: f64 = 220.0;
-    let offset_x: f64 = 16.0;
-    let offset_y: f64 = 16.0;
-
-    // Default screen bounds fallback (clamp conservatively)
-    // We can't easily query monitor size without a window in Tauri 2 setup phase,
-    // so we use a safe default; the cursor position is trusted to be on-screen already.
-    let screen_w: f64 = 3840.0; // supports up to 4K — rdev coords are real screen pixels
-    let screen_h: f64 = 2160.0;
-
-    let mut x = cursor_x + offset_x;
-    let mut y = cursor_y + offset_y;
-
-    if x + popup_w > screen_w {
-        x = screen_w - popup_w - 10.0;
-    }
-    if y + popup_h > screen_h {
-        y = screen_h - popup_h - 10.0;
-    }
-    if x < 0.0 {
-        x = 10.0;
-    }
-    if y < 0.0 {
-        y = 10.0;
-    }
 
     // URL-encode the init parameters to pass via query string
     let orig_encoded = url_encode(original);
     let lang_encoded = url_encode(target_language);
 
-    let url = format!(
-        "popup.html?original={}&lang={}",
-        orig_encoded, lang_encoded
-    );
+    let url = format!("popup.html?original={}&lang={}", orig_encoded, lang_encoded);
 
-    WebviewWindowBuilder::new(app, "translate-popup", WebviewUrl::App(url.into()))
+    // Build hidden so we can position by physical pixels before the first paint,
+    // avoiding a flash at the wrong spot on high-DPI displays.
+    let window = WebviewWindowBuilder::new(app, "translate-popup", WebviewUrl::App(url.into()))
         .title("Quick Translator")
         .inner_size(popup_w, popup_h)
-        .position(x, y)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
         .focused(true)
-        .visible(true)
+        .visible(false)
         .build()
         .map_err(|e| format!("failed to create popup: {e}"))?;
+
+    // Anchor the popup to the cursor, clamped to the monitor under the cursor.
+    // rdev gives physical pixels and set_position takes physical pixels, so all
+    // math here is in physical space — no logical/physical mismatch, DPI-safe.
+    // Scale comes from the cursor's monitor (correct on mixed-DPI multi-monitor).
+    let cursor_monitor = window.monitor_from_point(cursor_x, cursor_y).ok().flatten();
+    let scale = cursor_monitor
+        .as_ref()
+        .map(|m| m.scale_factor())
+        .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
+
+    let popup_pw = popup_w * scale;
+    let popup_ph = popup_h * scale;
+    let offset = 16.0 * scale;
+
+    let mut x = cursor_x + offset;
+    let mut y = cursor_y + offset;
+
+    if let Some(monitor) = cursor_monitor {
+        let m_pos = monitor.position();
+        let m_size = monitor.size();
+        let left = m_pos.x as f64;
+        let top = m_pos.y as f64;
+        let right = left + m_size.width as f64;
+        let bottom = top + m_size.height as f64;
+
+        if x + popup_pw > right {
+            x = right - popup_pw - 10.0 * scale;
+        }
+        if y + popup_ph > bottom {
+            y = bottom - popup_ph - 10.0 * scale;
+        }
+        if x < left {
+            x = left + 10.0 * scale;
+        }
+        if y < top {
+            y = top + 10.0 * scale;
+        }
+    }
+
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.show();
+    let _ = window.set_focus();
 
     Ok(())
 }
