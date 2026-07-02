@@ -50,6 +50,7 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 - Tray icon is owned solely by the code (`TrayIconBuilder` in `main.rs`); `tauri.conf.json` must NOT declare `app.trayIcon` or two icons appear (only the code one has a menu)
 - Popup blur-to-close only fires after the window has gained focus once (built with `.focused(true)`) — prevents an instant close when the window never grabs focus
 - `api.rs` uses a connect timeout + per-chunk stream idle timeout so a hung server surfaces an error instead of an eternal spinner
+- Tauri 2 ACL: `core:window:default` grants ONLY read/query methods. Frontend `window.close()` needs `core:window:allow-close`; `data-tauri-drag-region` needs `core:window:allow-start-dragging`. Both must be listed in `capabilities/default.json` or the calls are silently denied (popup won't close/drag). Custom `#[tauri::command]`s and backend-side window calls are NOT ACL-gated.
 
 ---
 
