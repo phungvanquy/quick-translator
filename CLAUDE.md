@@ -51,6 +51,8 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 - Popup blur-to-close only fires after the window has gained focus once (built with `.focused(true)`) — prevents an instant close when the window never grabs focus
 - `api.rs` uses a connect timeout + per-chunk stream idle timeout so a hung server surfaces an error instead of an eternal spinner
 - Tauri 2 ACL: `core:window:default` grants ONLY read/query methods. Frontend `window.close()` needs `core:window:allow-close`; `data-tauri-drag-region` needs `core:window:allow-start-dragging`. Both must be listed in `capabilities/default.json` or the calls are silently denied (popup won't close/drag). Custom `#[tauri::command]`s and backend-side window calls are NOT ACL-gated.
+- Tray-app lifecycle: Tauri exits the process when the last window closes. Since popups open/close constantly, `main.rs` uses `.build().run(|_,ev| ...)` and calls `api.prevent_exit()` on `RunEvent::ExitRequested { code: None, .. }` (window close), letting `Some(_)` through (tray Quit calls `app.exit`). Without this, closing the popup kills the whole app.
+- Popup positioning is DPI-safe: `rdev` reports PHYSICAL pixels but `WebviewWindowBuilder::position()` expects LOGICAL pixels. So `show_translate_popup` builds the window hidden, then `set_position(PhysicalPosition)` using the cursor monitor's `scale_factor()`/bounds (`monitor_from_point`), then `show()`+`set_focus()`. Never pass rdev coords to the builder's `.position()`.
 
 ---
 
