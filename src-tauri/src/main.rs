@@ -7,7 +7,7 @@ mod config;
 mod hotkey;
 mod windows;
 
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use config::{Config, ConfigState, ConfigUpdate};
 use tauri::{
@@ -18,9 +18,8 @@ use tauri::{
 
 // ── Shared cursor position ────────────────────────────────────────────────────
 // Updated by the rdev listener; read when opening the popup.
-lazy_static::lazy_static! {
-    pub static ref LAST_CURSOR_POS: Mutex<(f64, f64)> = Mutex::new((100.0, 100.0));
-}
+pub static LAST_CURSOR_POS: LazyLock<Mutex<(f64, f64)>> =
+    LazyLock::new(|| Mutex::new((100.0, 100.0)));
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
