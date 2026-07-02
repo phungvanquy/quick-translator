@@ -19,22 +19,14 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Cache Rust build artifacts
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install cargo-tauri (Tauri CLI)
-        run: cargo install tauri-cli --version "^2"
+          workspaces: src-tauri
 
       - name: Build Tauri app (release)
-        run: cargo tauri build
-        working-directory: src-tauri
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: src-tauri
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
