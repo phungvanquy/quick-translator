@@ -93,6 +93,44 @@ pub async fn handle_translate_trigger(app: AppHandle) {
     api::translate_stream(text, cfg, popup_window).await;
 }
 
+// ── Chat trigger ────────────────────────────────────────────────────────────────
+
+/// Called from hotkey.rs when Ctrl+C+Space fires.
+/// Captures the selection, opens the chat popup (even for an empty selection —
+/// that becomes free chat), and lets the frontend drive requests via chat_send.
+pub async fn handle_chat_trigger(app: AppHandle) {
+    // Clipboard polling blocks for up to 500ms — run on a blocking thread
+    let selected = tokio::task::spawn_blocking(clipboard::get_clipboard_after_copy)
+        .await
+        .unwrap_or_default();
+
+    let (cx, cy) = *LAST_CURSOR_POS.lock().unwrap();
+
+    if let Err(e) = windows::show_chat_popup(&app, &selected, cx, cy) {
+        eprintln!("chat popup error: {e}");
+    }
+}
+
+// ── Chat command (frontend-driven) ────────────────────────────────────────────
+
+/// Stream a chat response for the given question and prior history.
+/// The frontend owns the conversation history and selected-text context; this
+/// command assembles the request and streams chunks back to the chat window.
+#[tauri::command]
+async fn chat_send(
+    app: AppHandle,
+    selected_text: String,
+    question: String,
+    history: Vec<api::ChatMessage>,
+) -> Result<(), String> {
+    let cfg = app.state::<ConfigState>().get();
+    let window = app
+        .get_webview_window("chat-popup")
+        .ok_or_else(|| "chat popup window not found".to_string())?;
+    api::chat_stream(selected_text, question, history, cfg, window).await;
+    Ok(())
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -177,7 +215,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             update_config,
-            open_settings_cmd
+            open_settings_cmd,
+            chat_send
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

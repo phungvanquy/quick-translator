@@ -65,6 +65,21 @@
         <span class="field-hint">Language to translate into, e.g. Vietnamese, French.</span>
       </div>
 
+      <div class="field">
+        <label class="label" for="custom-prompt">Custom Prompt</label>
+        <textarea
+          class="input textarea"
+          id="custom-prompt"
+          name="custom_prompt"
+          rows="4"
+          spellcheck="false"
+        ></textarea>
+        <div class="prompt-footer">
+          <span class="field-hint">Use <code>{target_language}</code> as a placeholder. Leave blank for default.</span>
+          <button type="button" class="btn-link" id="reset-prompt-btn">Reset to default</button>
+        </div>
+      </div>
+
       <div class="actions">
         <button type="submit" class="btn-primary" id="save-btn">Save</button>
         <span class="save-status" id="save-status"></span>

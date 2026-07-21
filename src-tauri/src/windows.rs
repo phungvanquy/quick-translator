@@ -52,18 +52,82 @@ pub fn show_translate_popup(
         .build()
         .map_err(|e| format!("failed to create popup: {e}"))?;
 
-    // Anchor the popup to the cursor, clamped to the monitor under the cursor.
-    // rdev gives physical pixels and set_position takes physical pixels, so all
-    // math here is in physical space — no logical/physical mismatch, DPI-safe.
-    // Scale comes from the cursor's monitor (correct on mixed-DPI multi-monitor).
+    // Anchor the popup to the cursor, clamped to the monitor under the cursor
+    // (DPI-safe, physical-pixel math — see position_at_cursor).
+    position_at_cursor(&window, popup_w, popup_h, cursor_x, cursor_y);
+
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    Ok(())
+}
+
+// ── Chat popup ────────────────────────────────────────────────────────────────
+
+/// Create and show the chat popup near the cursor.
+/// `selected`: captured selection text (may be empty → free chat)
+/// `cursor_x`, `cursor_y`: cursor position in PHYSICAL screen pixels (see
+///   show_translate_popup for the DPI rationale — we build hidden then position).
+pub fn show_chat_popup(
+    app: &AppHandle,
+    selected: &str,
+    cursor_x: f64,
+    cursor_y: f64,
+) -> Result<(), String> {
+    // Close any existing chat popup before opening a new one
+    if let Some(existing) = app.get_webview_window("chat-popup") {
+        let _ = existing.close();
+    }
+
+    let popup_w: f64 = 500.0;
+    let popup_h: f64 = 580.0;
+
+    let sel_encoded = url_encode(selected);
+    let url = format!("chat.html?selected={}", sel_encoded);
+
+    let window = WebviewWindowBuilder::new(app, "chat-popup", WebviewUrl::App(url.into()))
+        .title("Quick Translator — Chat")
+        .inner_size(popup_w, popup_h)
+        .min_inner_size(380.0, 320.0)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(true)
+        .focused(true)
+        .visible(false)
+        .build()
+        .map_err(|e| format!("failed to create chat popup: {e}"))?;
+
+    position_at_cursor(&window, popup_w, popup_h, cursor_x, cursor_y);
+
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    Ok(())
+}
+
+// ── Cursor-anchored positioning (DPI-safe) ──────────────────────────────────────
+
+/// Position an already-built (hidden) window near the cursor, clamped to the
+/// monitor under the cursor. All math is in physical pixels: rdev reports
+/// physical, set_position takes physical, and scale comes from the cursor's
+/// monitor (correct on mixed-DPI multi-monitor). Never pass rdev coords to the
+/// builder's logical `.position()`.
+fn position_at_cursor(
+    window: &tauri::WebviewWindow,
+    logical_w: f64,
+    logical_h: f64,
+    cursor_x: f64,
+    cursor_y: f64,
+) {
     let cursor_monitor = window.monitor_from_point(cursor_x, cursor_y).ok().flatten();
     let scale = cursor_monitor
         .as_ref()
         .map(|m| m.scale_factor())
         .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
 
-    let popup_pw = popup_w * scale;
-    let popup_ph = popup_h * scale;
+    let popup_pw = logical_w * scale;
+    let popup_ph = logical_h * scale;
     let offset = 16.0 * scale;
 
     let mut x = cursor_x + offset;
@@ -92,10 +156,6 @@ pub fn show_translate_popup(
     }
 
     let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.show();
-    let _ = window.set_focus();
-
-    Ok(())
 }
 
 // ── Settings window ───────────────────────────────────────────────────────────

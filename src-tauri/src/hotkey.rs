@@ -76,7 +76,7 @@ fn is_modifier_or_combo(key: &Key) -> bool {
             | Key::MetaLeft
             | Key::MetaRight
             | Key::CapsLock
-            | Key::KeyC  // The combo key itself
+            | Key::KeyC  // The translate combo key
     )
 }
 
@@ -158,8 +158,30 @@ fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
                 }
             }
         });
+    } else if key == Key::Space && ctrl_is_down() {
+        // Ctrl+Space — fires chat only if a Ctrl+C armed the window within 0.6s.
+        // Shares the single arm window with the translate double-tap, so a given
+        // Ctrl+C leads to translate OR chat depending on the second key.
+        if s.armed {
+            if let Some(arm_time) = s.last_ctrl_c_time {
+                if now.duration_since(arm_time) < Duration::from_millis(600) {
+                    s.armed = false;
+                    s.last_trigger_time = Some(now);
+                    drop(s); // release lock before spawning
+
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        crate::handle_chat_trigger(app_handle).await;
+                    });
+                    return;
+                }
+            }
+        }
+        // Ctrl+Space with no live armed window → clear armed state
+        s.armed = false;
     } else if !is_modifier_or_combo(&key) {
-        // Non-modifier, non-combo key → reset armed state
+        // Non-modifier, non-combo key → reset armed state.
+        // A bare Space (Ctrl not held) lands here and resets, matching Python.
         s.armed = false;
     }
 }

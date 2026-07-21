@@ -1,14 +1,17 @@
-//! Streaming translation — parity with api.py translate_stream
+//! Streaming translation & chat — parity with api.py translate_stream /
+//! chat_with_context_stream.
 //!
-//! POSTs to <base_url>/chat/completions with stream:true, parses SSE,
-//! and emits Tauri events to the popup window:
-//!   "translate://chunk"  — payload: String delta
-//!   "translate://done"   — payload: null / empty string
+//! POSTs to <base_url>/chat/completions with stream:true, parses SSE, and emits
+//! Tauri events to the target window:
+//!   "translate://chunk" / "chat://chunk" — payload: String delta
+//!   "translate://done"  / "chat://done"  — payload: null / empty string
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use std::time::Duration;
 use tauri::{Emitter, WebviewWindow};
+
+use serde::Serialize;
 
 use crate::config::Config;
 
@@ -37,48 +40,40 @@ struct SseChunk {
     choices: Option<Vec<SseChoice>>,
 }
 
-// ── Main translation function ─────────────────────────────────────────────────
+// ── Chat message (frontend ↔ backend) ─────────────────────────────────────────
 
-/// Run streaming translation and emit events to `window`.
-///
-/// Called from the async runtime (tokio), spawned by handle_translate_trigger.
-pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) {
-    // No API key → emit message and stop, no HTTP call
-    if cfg.api_key.trim().is_empty() {
-        let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
-        let _ = window.emit("translate://chunk", msg);
-        let _ = window.emit("translate://done", "");
-        return;
-    }
+/// One conversation turn passed from the chat frontend and forwarded to the API.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
 
-    // Build system prompt — substitute {target_language}; fallback to raw on failure
-    // Mirrors the Python: try prompt.format(target_language=...) except → use raw
-    let system_content = if cfg.custom_prompt.contains("{target_language}") {
-        cfg.custom_prompt
-            .replace("{target_language}", &cfg.target_language)
-    } else {
-        cfg.custom_prompt.clone()
-    };
+// ── Base URL helper ─────────────────────────────────────────────────────────
 
-    // Build request body
-    let base_url = if cfg.base_url.trim().is_empty() {
+fn resolve_base_url(cfg: &Config) -> String {
+    if cfg.base_url.trim().is_empty() {
         "https://api.openai.com/v1".to_string()
     } else {
         cfg.base_url.trim_end_matches('/').to_string()
-    };
-    let url = format!("{}/chat/completions", base_url);
+    }
+}
 
-    let body = serde_json::json!({
-        "model": cfg.model,
-        "messages": [
-            {"role": "system", "content": system_content},
-            {"role": "user",   "content": text}
-        ],
-        "max_completion_tokens": 1000,
-        "stream": true
-    });
+// ── Shared streaming core ─────────────────────────────────────────────────────
 
-    // Send request
+/// POST a chat/completions request and stream deltas to `window` via the given
+/// event names. `chunk_event` receives each content delta (String); `done_event`
+/// fires once when the stream ends or errors. Errors are surfaced as a chunk on
+/// `chunk_event` followed by `done_event`, so the popup never hangs.
+async fn stream_completion(
+    body: serde_json::Value,
+    cfg: &Config,
+    window: &WebviewWindow,
+    chunk_event: &str,
+    done_event: &str,
+) {
+    let url = format!("{}/chat/completions", resolve_base_url(cfg));
+
     let client = match reqwest::Client::builder()
         .use_rustls_tls()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -86,8 +81,8 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
     {
         Ok(c) => c,
         Err(e) => {
-            let _ = window.emit("translate://chunk", format!("⚠ Error: {e}"));
-            let _ = window.emit("translate://done", "");
+            let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
+            let _ = window.emit(done_event, "");
             return;
         }
     };
@@ -106,17 +101,17 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
                 let status = r.status();
                 let body_text = r.text().await.unwrap_or_default();
                 let _ = window.emit(
-                    "translate://chunk",
+                    chunk_event,
                     format!("⚠ Error: HTTP {status} — {body_text}"),
                 );
-                let _ = window.emit("translate://done", "");
+                let _ = window.emit(done_event, "");
                 return;
             }
             r
         }
         Err(e) => {
-            let _ = window.emit("translate://chunk", format!("⚠ Error: {e}"));
-            let _ = window.emit("translate://done", "");
+            let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
+            let _ = window.emit(done_event, "");
             return;
         }
     };
@@ -132,10 +127,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
         let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
             Ok(next) => next,
             Err(_) => {
-                let _ = window.emit(
-                    "translate://chunk",
-                    "⚠ Error: response timed out (no data for 60s)",
-                );
+                let _ = window.emit(chunk_event, "⚠ Error: response timed out (no data for 60s)");
                 break;
             }
         };
@@ -148,7 +140,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
         let bytes = match chunk_result {
             Ok(b) => b,
             Err(e) => {
-                let _ = window.emit("translate://chunk", format!("⚠ Error: {e}"));
+                let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
                 break;
             }
         };
@@ -172,7 +164,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
             if let Some(data) = line.strip_prefix("data: ") {
                 let data = data.trim();
                 if data == "[DONE]" {
-                    let _ = window.emit("translate://done", "");
+                    let _ = window.emit(done_event, "");
                     return;
                 }
                 // Parse JSON chunk
@@ -181,7 +173,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
                         if let Some(choice) = choices.into_iter().next() {
                             if let Some(delta) = choice.delta.content {
                                 if !delta.is_empty() {
-                                    let _ = window.emit("translate://chunk", &delta);
+                                    let _ = window.emit(chunk_event, &delta);
                                 }
                             }
                         }
@@ -192,5 +184,95 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
     }
 
     // Stream ended without [DONE]
-    let _ = window.emit("translate://done", "");
+    let _ = window.emit(done_event, "");
+}
+
+// ── Main translation function ─────────────────────────────────────────────────
+
+/// Run streaming translation and emit events to `window`.
+///
+/// Called from the async runtime (tokio), spawned by handle_translate_trigger.
+pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) {
+    // No API key → emit message and stop, no HTTP call
+    if cfg.api_key.trim().is_empty() {
+        let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
+        let _ = window.emit("translate://chunk", msg);
+        let _ = window.emit("translate://done", "");
+        return;
+    }
+
+    // Build system prompt — substitute {target_language}; fallback to raw on failure
+    // Mirrors the Python: try prompt.format(target_language=...) except → use raw
+    let system_content = if cfg.custom_prompt.contains("{target_language}") {
+        cfg.custom_prompt
+            .replace("{target_language}", &cfg.target_language)
+    } else {
+        cfg.custom_prompt.clone()
+    };
+
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": [
+            {"role": "system", "content": system_content},
+            {"role": "user",   "content": text}
+        ],
+        "max_completion_tokens": 1000,
+        "stream": true
+    });
+
+    stream_completion(body, &cfg, &window, "translate://chunk", "translate://done").await;
+}
+
+// ── Chat function ───────────────────────────────────────────────────────────
+
+/// Run a streaming chat request and emit events to the chat `window`.
+///
+/// Messages = system prompt (varies on selected text) + prior history + question,
+/// mirroring api.py chat_with_context_stream.
+pub async fn chat_stream(
+    selected_text: String,
+    question: String,
+    history: Vec<ChatMessage>,
+    cfg: Config,
+    window: WebviewWindow,
+) {
+    // No API key → emit message and stop, no HTTP call
+    if cfg.api_key.trim().is_empty() {
+        let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
+        let _ = window.emit("chat://chunk", msg);
+        let _ = window.emit("chat://done", "");
+        return;
+    }
+
+    let system_content = if selected_text.trim().is_empty() {
+        "You are a helpful assistant. Answer concisely and clearly. \
+         You may use Markdown formatting (bold, italic, code blocks, lists) \
+         where it helps readability."
+            .to_string()
+    } else {
+        format!(
+            "You are a helpful assistant. The user has selected the following text:\n\n\
+             ---\n{selected_text}\n---\n\n\
+             Answer the user's questions about it concisely and clearly. \
+             You may use Markdown formatting (bold, italic, code blocks, lists) \
+             where it helps readability."
+        )
+    };
+
+    // messages = [system] + history + [user question]
+    let mut messages: Vec<serde_json::Value> =
+        vec![serde_json::json!({"role": "system", "content": system_content})];
+    for m in &history {
+        messages.push(serde_json::json!({"role": m.role, "content": m.content}));
+    }
+    messages.push(serde_json::json!({"role": "user", "content": question}));
+
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": messages,
+        "max_completion_tokens": 1000,
+        "stream": true
+    });
+
+    stream_completion(body, &cfg, &window, "chat://chunk", "chat://done").await;
 }

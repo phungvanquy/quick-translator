@@ -65,6 +65,40 @@ html, body {
   margin-top: 4px;
 }
 
+.field-hint code {
+  font-family: var(--font-mono);
+  color: var(--subtext);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+.prompt-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--subtext);
+  font-family: var(--font-family);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-link:hover {
+  color: var(--blue);
+}
+
 .actions {
   display: flex;
   align-items: center;

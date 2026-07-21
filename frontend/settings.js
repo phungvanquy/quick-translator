@@ -3,11 +3,18 @@
 
 const { invoke } = window.__TAURI__.core;
 
+// Default translator prompt — mirrors DEFAULT_PROMPT in config.rs / config.py
+const DEFAULT_PROMPT =
+  "You are a translator. Translate the user's text to {target_language}. " +
+  "Reply with ONLY the translation — no explanations, no notes.";
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const apiKeyInput     = document.getElementById('api-key');
 const baseUrlInput    = document.getElementById('base-url');
 const modelInput      = document.getElementById('model');
 const targetLangInput = document.getElementById('target-lang');
+const promptInput     = document.getElementById('custom-prompt');
+const resetPromptBtn  = document.getElementById('reset-prompt-btn');
 const saveBtn         = document.getElementById('save-btn');
 const saveStatus      = document.getElementById('save-status');
 const form            = document.getElementById('settings-form');
@@ -20,6 +27,7 @@ async function loadConfig() {
     baseUrlInput.value    = cfg.base_url         || '';
     modelInput.value      = cfg.model            || '';
     targetLangInput.value = cfg.target_language  || '';
+    promptInput.value     = cfg.custom_prompt    || DEFAULT_PROMPT;
   } catch (e) {
     showStatus('Failed to load config: ' + e, true);
   }
@@ -29,11 +37,15 @@ async function loadConfig() {
 async function saveConfig(e) {
   e.preventDefault();
 
+  // Blank prompt falls back to the default template (parity with settings.py)
+  const promptVal = promptInput.value.trim() || DEFAULT_PROMPT;
+
   const update = {
     api_key:         apiKeyInput.value.trim(),
     base_url:        baseUrlInput.value.trim(),
     model:           modelInput.value.trim(),
     target_language: targetLangInput.value.trim(),
+    custom_prompt:   promptVal,
   };
 
   try {
@@ -59,4 +71,7 @@ function showStatus(msg, isError) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 form.addEventListener('submit', saveConfig);
+resetPromptBtn.addEventListener('click', () => {
+  promptInput.value = DEFAULT_PROMPT;
+});
 loadConfig().catch(console.error);
