@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -24,19 +24,19 @@ jobs:
           workspaces: src-tauri
 
       - name: Build Tauri app (release)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
           projectPath: src-tauri
 
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: QuickTranslator-Windows
           path: src-tauri/target/release/quick-translator.exe
           retention-days: 30
 
       - name: Upload NSIS installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: QuickTranslator-Setup
           path: src-tauri/target/release/bundle/nsis/*.exe

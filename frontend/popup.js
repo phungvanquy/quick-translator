@@ -72,6 +72,7 @@ async function init() {
   startSpinner();
 
   let streamStarted = false;
+  let fullText = '';
 
   // Listen for translation chunks
   const unlistenChunk = await listen('translate://chunk', (event) => {
@@ -82,7 +83,10 @@ async function init() {
       streamStarted = true;
       stopSpinner();
     }
-    translationText.textContent += event.payload;
+    // Keep the raw source for final Markdown rendering, and show plain text
+    // while streaming (partial Markdown renders poorly).
+    fullText += event.payload;
+    translationText.textContent = fullText;
   });
 
   // Listen for stream completion
@@ -92,6 +96,11 @@ async function init() {
       spinner.style.display = 'none';
       translationText.style.display = 'block';
     }
+    // Render the accumulated text as Markdown. renderMarkdown escapes its
+    // input first, so any HTML/script in the translation is inert. Empty
+    // input renders to an empty string, which is harmless.
+    translationText.innerHTML = renderMarkdown(fullText);
+    translationText.classList.add('rendered');
     // Clean up event listeners
     unlistenChunk();
     unlistenDone();
