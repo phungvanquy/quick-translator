@@ -1,19 +1,19 @@
 # Quick Translator — Project Memory
 
 ## Overview
-Desktop translator & AI chat assistant. Currently implemented in Python/Tkinter (reference implementation). Being rewritten to Rust + Tauri 2.x in stages — see "Rust/Tauri Rewrite" section below.
+Desktop translator & AI chat assistant, built in Rust + Tauri 2.x. Highlight text, press a hotkey, get a streaming translation or open a chat popup. Small binary, low idle footprint, compile-time safety.
 
-## Staged Rewrite Plan
+## Build Stages
 
-The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smaller binary, lower idle footprint, and compile-time safety. The Python source files remain in the repo as the **behavioral reference** for Stages 2–3.
+The app was built up in stages. Stages 1 and 2 are implemented and shipping; Stage 3 is the remaining roadmap.
 
 | Stage | Scope | Status |
 |---|---|---|
 | **Stage 1** | Translate flow vertical slice: tray, Ctrl+C+C hotkey, clipboard, streaming translation popup, settings, CI | Implemented in `src-tauri/` + `frontend/` |
-| **Stage 2** | Chat popup, Ctrl+C+Space hotkey, markdown rendering in popup | Pending |
-| **Stage 3** | TTS/read-aloud, full settings UI, language auto-detect, history/log | Pending |
+| **Stage 2** | Chat popup, Ctrl+C+Space hotkey, markdown rendering in popup | Implemented in `src-tauri/` + `frontend/` |
+| **Stage 3** | Roadmap — see "Stage 3 Roadmap" below | Pending |
 
-## Rust/Tauri Stage-1 Architecture
+## Rust/Tauri Architecture
 
 ### Tech stack
 - **Backend**: Rust, Tauri 2.x, tokio async runtime
@@ -24,20 +24,22 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Bootstrap: config load, tray icon, rdev listener spawn, Tauri commands, entry point |
+| `main.rs` | Bootstrap: config load, tray icon, rdev listener spawn, Tauri commands (incl. `chat_send`), translate + chat triggers, entry point |
 | `config.rs` | `Config` struct, load/save (~/.quicktranslator_config.json), `ConfigState` (Mutex) |
-| `hotkey.rs` | rdev passive listener: Ctrl+C+C state machine + cursor-position tracking |
+| `hotkey.rs` | rdev passive listener: Ctrl+C+C (translate) + Ctrl+C+Space (chat) state machine + cursor-position tracking |
 | `clipboard.rs` | `get_clipboard_after_copy`: polls arboard ≤10× @50ms for changed clipboard text |
-| `api.rs` | reqwest + SSE streaming to chat/completions, emits `translate://chunk`/`translate://done` |
-| `windows.rs` | Create/show translate popup and settings `WebviewWindow` |
+| `api.rs` | reqwest + SSE streaming to chat/completions: emits `translate://chunk`/`translate://done` and `chat://chunk`/`chat://done` |
+| `windows.rs` | Create/show translate popup, chat popup, and settings `WebviewWindow` |
 
 ### Frontend layout (`frontend/`)
 
 | File | Purpose |
 |---|---|
-| `theme.css` | GitHub-dark CSS variables (ported from constants.py) |
+| `theme.css` | GitHub-dark CSS variables |
 | `popup.html/css/js` | Frameless translate popup: draggable header, spinner, streaming text, Esc+blur close |
-| `settings.html/css/js` | Settings form: api_key, base_url, model, target_language |
+| `chat.html/css/js` | Frameless chat popup: context strip, scrollable transcript, input bar, streaming assistant bubbles |
+| `markdown.js` | Minimal XSS-safe markdown→HTML renderer for chat responses |
+| `settings.html/css/js` | Settings form: api_key, base_url, model, target_language, custom_prompt |
 
 ### Key design decisions
 - `rdev::listen` (passive, single thread) for both Ctrl+C+C detection and cursor tracking — NOT the Tauri global-shortcut plugin (cannot express double-tap)
@@ -56,44 +58,23 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 
 ---
 
-## Python Reference Implementation (Stages 2–3 reference)
+## Stage 3 Roadmap
 
-> The Python source files below are NOT the active build — they are the behavioral reference for completing the Rust rewrite in Stages 2 and 3. The active CI build is `build.yml` (Tauri/Rust).
->
-> **Location:** all Python sources, `icon.ico`/`icon.png`, `installer.iss`, and `requirements.txt` live under `python-reference/`. Module paths in the tables below are relative to that directory (e.g. `python-reference/main.py`). Imports are flat/sibling, so run the app with `python-reference/` as the working directory (`cd python-reference && python main.py`).
+Remaining features. The project was previously ported from a Python/Tkinter prototype; that reference has been removed (recoverable from git history if ever needed). Behaviors worth preserving are captured as OpenSpec specs.
 
-## Python Build Notes (reference only — CI no longer uses this)
-- PyInstaller builds standalone `.exe` (with `--uac-admin` for global hotkeys)
-- Inno Setup (`iscc installer.iss`) builds Windows installer
-- `--add-data` bundles all `.py` modules + `icon.ico` + `icon.png` alongside the exe
-- **When adding a new `.py` module, you MUST add a corresponding `--add-data` line in `build.yml`** (no longer applicable to current CI)
+- **TTS read-aloud** — spec'd in `openspec/changes/production-cleanup-drop-python/specs/tts-read-aloud/spec.md` (or its archived location once applied). A 🔊 button in the translate popup that speaks the **source** text aloud via an OS-native/offline engine (~160 wpm, ~0.9 volume), non-blocking, single active utterance (new speak stops in-progress), and stops when the popup closes. Rust approach: prefer the `tts` crate (SAPI on Windows) or a small Tauri command over the OS speech API.
+- **Translation history / log** — idea only, never built. Persist past translations for review.
+- **Language auto-detection** — idea only, never built. Detect source language instead of assuming.
 
-## Architecture (after refactoring)
+## Pre-release Manual QA Checklist
 
-| Module | ~Lines | Responsibility |
-|---|---|---|
-| `main.py` | 94 | Entry point, tk root, clipboard helper, handler wiring |
-| `config.py` | 51 | Config load/save/get/update, DEFAULT_CONFIG, DEFAULT_PROMPT |
-| `api.py` | 102 | OpenAI client management, translate_stream, chat_with_context_stream |
-| `settings.py` | 156 | Settings window UI |
-| `translate_popup.py` | 186 | Translation popup with streaming |
-| `chat_popup.py` | 708 | Chat popup UI, markdown→tk.Text renderer (mistune 3.x AST), scrollable message frame |
-| `hotkeys.py` | 78 | Global hotkey engine (Ctrl+C+C, Ctrl+C+Space) via register_hotkeys() |
-| `tray.py` | 75 | System tray icon, graceful shutdown |
-| `tts.py` | 40 | Offline text-to-speech via pyttsx3 (OS-native engines) |
-| `utils.py` | 58 | Shared UI helpers: bind_close_outside, block_edits |
-| `constants.py` | 207 | Color palette (GitHub dark), platform-aware fonts, padding, UI helpers (bind_hover, fade_in, LoadingSpinner) |
-| `requirements.txt` | — | openai, keyboard, pyperclip, pystray, Pillow, mistune, pyttsx3 |
-| `installer.iss` | — | Inno Setup script for Windows installer |
+These require a Windows run with a global keyboard hook + an API key (can't run in headless/CI). Verify before tagging a release:
 
-## Key Patterns
-- Config stored at `~/.quicktranslator_config.json`, thread-safe via `_config_lock`
-- OpenAI client reused, recreated only when credentials change
-- Hotkeys: Ctrl+C+C → translate, Ctrl+C+Space → chat (custom key combo detection via `keyboard` lib)
-- Single hidden `tk.Tk` root; all popups are `Toplevel` children
-- Streaming responses: background thread yields chunks → `widget.after(0, ...)` dispatches to UI thread
-- Markdown rendering: mistune AST → recursive insertion with tk.Text tags
-- Platform-aware fonts: `FONT_FAMILY` in constants.py picks Segoe UI / SF Pro Text / Noto Sans based on OS
+- [ ] Ctrl+C+Space opens chat with the selection as context; Ctrl+C+C still translates; neither double-fires
+- [ ] Esc / close button / click-outside all close the chat popup; clearing context switches to Free Chat
+- [ ] Custom prompt field loads, saves, resets to default, and blank-saves fall back to the default template
+- [ ] Saving a custom prompt persists to `~/.quicktranslator_config.json` and a subsequent translate uses it
+- [ ] `cargo build` / `cargo tauri build` passes on the Windows CI target
 
 ## Session Rules
 - **On interrupted sessions:** Always audit `git status` and `git diff --stat` first, read changed/new files, then continue from where it stopped — never start from scratch.
@@ -101,39 +82,29 @@ The project is being ported from Python/Tkinter to Rust + Tauri 2.x for a smalle
 
 ## Identified Improvements
 
-### Completed (2026-04-08)
-- [x] **#1** — Split main.py into 10 focused modules (config, api, settings, translate_popup, hotkeys, tray, utils)
-- [x] **#2** — Deduplicated `_bind_close_outside` → now in `utils.py`
-- [x] **#3** — Deduplicated `_block_edits` → now in `utils.py`
-- [x] **#4** — Mid-file import of constants fixed (all imports at top)
-- [x] **#13** — Platform-aware font fallbacks added (`FONT_FAMILY` in `constants.py`), all hardcoded `"Segoe UI"` replaced
-
-### Pending
+Potential improvements carried over from the prototype. They have NOT been re-verified against the current Rust code — confirm the issue still exists before acting.
 
 #### Error Handling / Robustness
-5. **No validation on config values** — `model`, `base_url`, `target_language` accept any string with no validation. Malformed base_url will crash silently.
-6. **`os._exit(0)` on quit** — Forceful exit in `tray.py` `_graceful_shutdown`. Should gracefully shutdown (close OpenAI client, stop keyboard hooks, destroy tk root).
-7. **No error feedback in chat** — If API call fails, error message appears as plain text in the chat bubble but looks like a normal response.
-8. **`get_clipboard_after_copy` is fragile** — Polling-based clipboard check with fixed retries. Can miss or return stale text if system is slow.
+- **No validation on config values** — `model`, `base_url`, `target_language` accept any string with no validation. A malformed `base_url` should surface a clear error rather than failing opaquely.
+- **Clipboard capture is polling-based** — `get_clipboard_after_copy` polls arboard on a fixed retry budget; can miss or return stale text if the system is slow.
 
 #### Performance
-9. **`max_completion_tokens=1000` hardcoded** — Not configurable. Long translations or chat responses get truncated without warning.
-10. **Chat history unbounded until 50 messages** — The cap at 50 messages is reasonable but sends all 50 to API every time, consuming tokens unnecessarily.
+- **Completion token cap** — the max-tokens value is hardcoded; long translations/chat responses can truncate without warning. Consider making it configurable.
+- **Chat history sent whole** — the transcript is capped at 50 messages but the full window is sent to the API each turn, spending tokens unnecessarily.
 
 #### UI/UX
-11. **No keyboard shortcut to send in chat** — Only Enter works; no Ctrl+Enter for multi-line input.
-12. **Settings window hardcoded 500x660** — Not responsive; may clip on smaller screens.
-14. **Readme says "Catppuccin Mocha palette"** but constants.py comments say "GitHub dark" — The actual colors are GitHub dark. Readme is outdated.
-15. **No way to resize or scroll the translation popup** — Long translations get clipped at MAX_H=520.
+- **No Ctrl+Enter to send in chat** — only Enter sends; no multi-line-friendly shortcut.
+- **Settings window fixed size** — not responsive; may clip on smaller screens.
+- **Translate popup can't resize/scroll** — long translations can clip past the fixed max height.
 
 #### Security
-16. **API key stored in plaintext JSON** — `~/.quicktranslator_config.json` readable by any process. Consider OS keychain integration.
+- **API key stored in plaintext JSON** — `~/.quicktranslator_config.json` is readable by any process. Consider OS keychain integration.
 
 #### Testing
-17. **No tests at all** — Zero test files. Core logic (config, markdown rendering, clipboard handling) is easily testable.
+- **Thin test coverage** — only a Node unit test for the markdown renderer exists. Core Rust logic (config load/merge, clipboard, SSE parsing) is untested.
 
 #### Missing Features (Low Priority)
-18. No language auto-detection
-19. No translation history/log
-20. No hotkey customization in settings
-21. No proxy support configuration
+- No hotkey customization in settings
+- No proxy support configuration
+
+(Language auto-detection and translation history/log now live in "Stage 3 Roadmap" above.)

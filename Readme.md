@@ -2,7 +2,7 @@
 
 Lightweight desktop translator & AI chat assistant. Highlight any text, press a hotkey, get results instantly.
 
-> **Note:** The project is being rewritten to Rust + Tauri 2.x (active build under `src-tauri/` + `frontend/`, built by CI in `.github/workflows/build.yml`). The original Python/Tkinter implementation described below now lives under `python-reference/` and serves as the behavioral reference for the remaining rewrite stages.
+Built with Rust + Tauri 2.x. Source under `src-tauri/` (backend) and `frontend/` (static HTML/CSS/JS), built by CI in `.github/workflows/build.yml`.
 
 ## Features
 
@@ -11,17 +11,17 @@ Lightweight desktop translator & AI chat assistant. Highlight any text, press a 
 - **Custom translation prompt** — Fully customizable system prompt with `{target_language}` placeholder
 - **Markdown rendering** — AI responses render bold, italic, code blocks, headings, and lists
 - **System tray** — Runs silently; right-click the tray icon for Settings or Quit
-- **Dark theme** — Catppuccin Mocha palette with hover effects throughout
+- **Dark theme** — GitHub-dark palette with hover effects throughout
 
-## Setup (Python reference)
+## Setup
+
+Prerequisites: a stable Rust toolchain and the Tauri CLI (`cargo install tauri-cli`), plus the [Tauri platform dependencies](https://tauri.app/start/prerequisites/).
 
 ```bash
-cd python-reference
-pip install -r requirements.txt
-python main.py
+cargo tauri dev --config src-tauri/tauri.conf.json
 ```
 
-> **Note:** On Windows, run as Administrator — the `keyboard` library requires elevated privileges for global hotkeys.
+> **Note:** On Windows, run as Administrator — global hotkeys require elevated privileges (the app manifest requests elevation for packaged builds).
 
 On first launch, the Settings window opens automatically so you can enter your API key.
 
@@ -39,25 +39,13 @@ On first launch, the Settings window opens automatically so you can enter your A
 
 Settings are saved to `~/.quicktranslator_config.json` and applied immediately — no restart needed.
 
-## Build as .exe (Python reference)
+## Build
 
 ```bash
-cd python-reference
-pip install pyinstaller
-pyinstaller --onefile --noconsole --uac-admin --name QuickTranslator --hidden-import pystray._win32 --hidden-import mistune --add-data "constants.py;." --add-data "chat_popup.py;." main.py
+cargo tauri build --config src-tauri/tauri.conf.json
 ```
 
-The `.exe` will be in the `dist/` folder.
-
-### Windows Installer
-
-An Inno Setup script (`python-reference/installer.iss`) is included to build a proper Windows installer with:
-- Start Menu & Desktop shortcuts
-- Optional auto-start with Windows
-- Admin elevation (required for global hotkeys)
-- Uninstaller
-
-> The current GitHub Actions workflow builds the **Tauri/Rust** app (`.exe` + NSIS installer), not this Python one.
+This produces a standalone `.exe` (`src-tauri/target/release/quick-translator.exe`) and an NSIS installer (`src-tauri/target/release/bundle/nsis/`). The GitHub Actions workflow (`.github/workflows/build.yml`) runs the same build on `windows-latest` and uploads both artifacts.
 
 ## How it works
 

@@ -1,9 +1,4 @@
 config.json
-__pycache__/
-*.py[cod]
-build/
-dist/
-*.spec
 .env
 
 # Rust / Tauri build artifacts
