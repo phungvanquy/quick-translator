@@ -22,32 +22,13 @@ function truncate(text, maxLen = 120) {
 }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const langLabel       = document.getElementById('lang-label');
+const langName        = document.getElementById('lang-name');
 const originalText    = document.getElementById('original-text');
 const spinner         = document.getElementById('spinner');
 const translationText = document.getElementById('translation-text');
 const closeBtn        = document.getElementById('close-btn');
 const copyBtn         = document.getElementById('copy-btn');
-
-// ── Spinner frames (braille dots, matching Python constants.py) ───────────────
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-let spinnerIdx = 0;
-let spinnerInterval = null;
-
-function startSpinner() {
-  const icon = document.getElementById('spinner-icon');
-  spinnerInterval = setInterval(() => {
-    icon.textContent = SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length];
-    spinnerIdx++;
-  }, 80);
-}
-
-function stopSpinner() {
-  if (spinnerInterval !== null) {
-    clearInterval(spinnerInterval);
-    spinnerInterval = null;
-  }
-}
+const copyLabel       = copyBtn.querySelector('.copy-label');
 
 // ── Close ─────────────────────────────────────────────────────────────────────
 let isClosed = false;
@@ -55,7 +36,6 @@ let isClosed = false;
 async function closePopup() {
   if (isClosed) return;
   isClosed = true;
-  stopSpinner();
   try {
     await getCurrentWindow().close();
   } catch (_e) {
@@ -67,11 +47,9 @@ async function closePopup() {
 async function init() {
   const { original, lang } = getParams();
 
-  langLabel.textContent = '⟶  ' + lang;
+  langName.textContent = lang;
   originalText.textContent = truncate(original);
   originalText.title = original; // full untruncated text on hover
-
-  startSpinner();
 
   let streamStarted = false;
   let fullText = '';
@@ -83,7 +61,6 @@ async function init() {
       spinner.style.display = 'none';
       translationText.style.display = 'block';
       streamStarted = true;
-      stopSpinner();
     }
     // Keep the raw source for final Markdown rendering, and show plain text
     // while streaming (partial Markdown renders poorly).
@@ -93,7 +70,6 @@ async function init() {
 
   // Listen for stream completion
   const unlistenDone = await listen('translate://done', () => {
-    stopSpinner();
     if (!streamStarted) {
       spinner.style.display = 'none';
       translationText.style.display = 'block';
@@ -112,22 +88,25 @@ async function init() {
 
   // Copy the raw accumulated translation (not rendered HTML) to the clipboard.
   let copyResetTimer = null;
+  const copyIcon = copyBtn.querySelector('use');
   copyBtn.addEventListener('click', async () => {
     if (copyBtn.disabled) return;
     try {
       await navigator.clipboard.writeText(fullText);
       copyBtn.classList.remove('copy-error');
       copyBtn.classList.add('copied');
-      copyBtn.textContent = 'Copied ✓';
+      copyLabel.textContent = 'Copied';
+      copyIcon.setAttribute('href', '#ic-check');
     } catch (_e) {
       copyBtn.classList.remove('copied');
       copyBtn.classList.add('copy-error');
-      copyBtn.textContent = 'Copy failed';
+      copyLabel.textContent = 'Copy failed';
     }
     if (copyResetTimer) clearTimeout(copyResetTimer);
     copyResetTimer = setTimeout(() => {
       copyBtn.classList.remove('copied', 'copy-error');
-      copyBtn.textContent = 'Copy';
+      copyLabel.textContent = 'Copy';
+      copyIcon.setAttribute('href', '#ic-copy');
     }, 1200);
   });
 

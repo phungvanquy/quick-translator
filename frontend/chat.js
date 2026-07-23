@@ -14,7 +14,7 @@ function getParams() {
 }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const headerTitle  = document.getElementById('header-title');
+const headerLabel  = document.getElementById('header-label');
 const contextStrip = document.getElementById('context-strip');
 const contextText  = document.getElementById('context-text');
 const contextClear = document.getElementById('context-clear');
@@ -76,7 +76,7 @@ function clearContext() {
   selectedText = '';
   history = [];
   contextStrip.classList.add('hidden');
-  headerTitle.textContent = '💬 Free Chat';
+  headerLabel.textContent = 'Free Chat';
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────
@@ -141,10 +141,10 @@ async function init() {
   if (selectedText.trim()) {
     const short = selectedText.length > 140 ? selectedText.slice(0, 137) + '…' : selectedText;
     contextText.textContent = short;
-    headerTitle.textContent = '💬 Chat';
+    headerLabel.textContent = 'Chat';
   } else {
     contextStrip.classList.add('hidden');
-    headerTitle.textContent = '💬 Free Chat';
+    headerLabel.textContent = 'Free Chat';
   }
 
   await listen('chat://chunk', (event) => {

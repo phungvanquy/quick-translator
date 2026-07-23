@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="settings.css" />
 </head>
 <body>
+  <script src="icons.js"></script>
   <div class="container">
     <h1 class="title">Quick Translator Settings</h1>
 
@@ -76,7 +77,10 @@
         ></textarea>
         <div class="prompt-footer">
           <span class="field-hint">Use <code>{target_language}</code> as a placeholder. Leave blank for default.</span>
-          <button type="button" class="btn-link" id="reset-prompt-btn">Reset to default</button>
+          <button type="button" class="btn-link" id="reset-prompt-btn">
+            <svg class="ic" aria-hidden="true"><use href="#ic-refresh"/></svg>
+            <span>Reset to default</span>
+          </button>
         </div>
       </div>
 

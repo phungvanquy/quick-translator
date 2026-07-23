@@ -1,10 +1,13 @@
-/* chat.css — chat popup styles */
+/* chat.css — chat popup styles (indigo theme, rounded + elevated) */
+
+html {
+  background: transparent;
+}
 
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--border); /* 1px border effect around the window */
 }
 
 .chat-window {
@@ -12,7 +15,10 @@ html, body {
   flex-direction: column;
   height: 100%;
   background: var(--bg);
-  margin: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-window);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 /* ── Header (drag zone) ─────────────────────────────────────────────── */
@@ -21,36 +27,45 @@ html, body {
   align-items: center;
   justify-content: space-between;
   background: var(--surface);
-  height: 40px;
-  padding: 0 12px;
+  height: 44px;
+  padding: 0 14px;
   flex-shrink: 0;
   user-select: none;
   cursor: default;
 }
 
 .header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
   flex: 1;
 }
 
+.header-title .ic-chat {
+  color: var(--accent);
+}
+
 .close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--muted);
-  font-size: 13px;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-  line-height: 1;
+  padding: 4px;
+  border-radius: var(--radius-input);
+  line-height: 0;
   flex-shrink: 0;
-  transition: background 0.1s, color 0.1s;
+  transition: background 0.12s, color 0.12s;
 }
 
 .close-btn:hover {
-  background: var(--red);
-  color: var(--text);
+  background: var(--danger);
+  color: #ffffff;
 }
 
 /* ── Context strip ──────────────────────────────────────────────────── */
@@ -58,9 +73,9 @@ html, body {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--surface1);
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -71,30 +86,40 @@ html, body {
 .context-text {
   flex: 1;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--subtext);
   line-height: 1.4;
   word-break: break-word;
 }
 
 .context-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--muted);
-  font-size: 11px;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 2px;
+  border-radius: 4px;
+  line-height: 0;
   flex-shrink: 0;
+  transition: color 0.12s;
+}
+
+.context-clear .ic {
+  width: 13px;
+  height: 13px;
 }
 
 .context-clear:hover {
-  color: var(--red);
+  color: var(--danger);
 }
 
 /* ── Transcript ─────────────────────────────────────────────────────── */
 .transcript {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -102,8 +127,8 @@ html, body {
 
 .msg {
   max-width: 92%;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 9px 13px;
+  border-radius: var(--radius-card);
   font-size: 13px;
   line-height: 1.55;
   word-break: break-word;
@@ -112,7 +137,7 @@ html, body {
 
 .msg-user {
   align-self: flex-end;
-  background: var(--surface1);
+  background: var(--accent-soft);
   color: var(--text);
   white-space: pre-wrap;
 }
@@ -135,7 +160,7 @@ html, body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--subtext);
+  background: var(--accent);
   animation: typing-blink 1.2s infinite ease-in-out both;
 }
 
@@ -152,31 +177,32 @@ html, body {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--surface);
-  border-top: 1px solid var(--surface1);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .chat-input {
   flex: 1;
-  padding: 8px 12px;
+  padding: 9px 12px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: 6px;
+  border-radius: var(--radius-input);
   color: var(--text);
   font-family: var(--font-family);
   font-size: 13px;
   line-height: 1.4;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   resize: none;
   overflow-y: auto;
   max-height: 120px;
 }
 
 .chat-input:focus {
-  border-color: var(--blue);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .chat-input::placeholder {
@@ -187,8 +213,8 @@ html, body {
   background: var(--btn-primary-bg);
   color: var(--btn-primary-fg);
   border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
+  border-radius: var(--radius-input);
+  padding: 9px 18px;
   font-family: var(--font-family);
   font-size: 13px;
   font-weight: 600;
@@ -210,7 +236,7 @@ html, body {
 .msg-ai p { margin: 0 0 8px 0; }
 .msg-ai p:last-child { margin-bottom: 0; }
 .msg-ai h1, .msg-ai h2, .msg-ai h3 {
-  color: var(--blue);
+  color: var(--accent-2);
   margin: 6px 0 4px 0;
   line-height: 1.3;
 }
@@ -222,14 +248,14 @@ html, body {
 .msg-ai code {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--cyan);
+  color: var(--accent-2);
   background: var(--mantle);
   padding: 1px 4px;
   border-radius: 4px;
 }
 .msg-ai pre {
   background: var(--mantle);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   padding: 10px 12px;
   margin: 6px 0;
   overflow-x: auto;

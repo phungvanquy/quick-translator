@@ -8,10 +8,16 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
+  <script src="icons.js"></script>
   <!-- Header: drag region + language label + close button -->
   <div class="header" data-tauri-drag-region>
-    <span class="lang-label" id="lang-label" data-tauri-drag-region>⟶ Vietnamese</span>
-    <button class="close-btn" id="close-btn" title="Close (Esc)">✕</button>
+    <span class="lang-label" id="lang-label" data-tauri-drag-region>
+      <svg class="ic ic-arrow" aria-hidden="true"><use href="#ic-arrow-right"/></svg>
+      <span id="lang-name" data-tauri-drag-region>Vietnamese</span>
+    </span>
+    <button class="close-btn" id="close-btn" title="Close (Esc)" aria-label="Close">
+      <svg class="ic" aria-hidden="true"><use href="#ic-close"/></svg>
+    </button>
   </div>
 
   <!-- Original text (muted, truncated) -->
@@ -24,8 +30,8 @@
   <div class="result-area" id="result-area">
     <!-- Spinner shown until first chunk arrives -->
     <div class="spinner" id="spinner">
-      <span class="spinner-icon" id="spinner-icon">⠋</span>
-      <span class="spinner-label"> Translating…</span>
+      <svg class="ic ic-spin" aria-hidden="true"><use href="#ic-spinner"/></svg>
+      <span class="spinner-label">Translating…</span>
     </div>
     <!-- Translation output (hidden until first chunk) -->
     <div class="translation-text" id="translation-text" style="display:none"></div>
@@ -34,7 +40,10 @@
   <!-- Footer hint + copy -->
   <div class="footer">
     <span class="hint">Esc to close</span>
-    <button class="copy-btn" id="copy-btn" title="Copy translation" disabled>Copy</button>
+    <button class="copy-btn" id="copy-btn" title="Copy translation" disabled>
+      <svg class="ic" aria-hidden="true"><use href="#ic-copy"/></svg>
+      <span class="copy-label">Copy</span>
+    </button>
   </div>
 
   <script src="markdown.js"></script>

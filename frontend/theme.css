@@ -1,33 +1,88 @@
-/* GitHub-dark palette ported from constants.py */
+/* theme.css — Indigo brand design system (dark + light, follows OS preference).
+   All colors are tokens; components must read var(--…), never a literal hex.
+   Dark is the default; the light block below overrides the same token names. */
 :root {
-  --bg:        #0d1117;
-  --mantle:    #010409;
-  --surface:   #161b22;
-  --surface1:  #21262d;
-  --surface2:  #30363d;
-  --overlay:   #21262d;
-  --overlay1:  #30363d;
-  --muted:     #484f58;
-  --subtext:   #8b949e;
-  --text:      #e6edf3;
-  --blue:      #58a6ff;
-  --cyan:      #56d4dd;
-  --green:     #3fb950;
-  --yellow:    #d29922;
-  --red:       #f85149;
-  --border:    #21262d;
-  --shadow:    #010409;
-  --scrollbar: #30363d;
-  --input-bg:  #0d1117;
-  --input-border: #30363d;
-  --btn-primary-bg:    #238636;
+  /* Surfaces / elevation */
+  --bg:        #0E0E14;
+  --surface:   #17171F;
+  --surface1:  #1F1F2B;
+  --surface2:  #2A2A38;
+  --mantle:    #0A0A0F;
+  --border:    #262633;
+  --scrollbar: #2A2A38;
+
+  /* Text */
+  --text:      #E8E8F0;
+  --subtext:   #9B9BA8;
+  --muted:     #5A5A68;
+
+  /* Indigo brand accent */
+  --accent:       #7C6BFF;
+  --accent-hover: #8E7EFF;
+  --accent-2:     #A78BFA;
+  --accent-soft:  rgba(124, 107, 255, 0.16);
+
+  /* Status */
+  --success: #3FB950;
+  --danger:  #F85149;
+  --warn:    #D29922;
+
+  /* Inputs */
+  --input-bg:     #0E0E14;
+  --input-border: #2A2A38;
+
+  /* Primary button (indigo) */
+  --btn-primary-bg:    var(--accent);
   --btn-primary-fg:    #ffffff;
-  --btn-primary-hover: #2ea043;
-  --btn-secondary-bg:  #21262d;
-  --btn-secondary-fg:  #c9d1d9;
-  --btn-secondary-hover: #30363d;
-  --font-family: 'Segoe UI', 'SF Pro Text', 'Noto Sans', sans-serif;
+  --btn-primary-hover: var(--accent-hover);
+
+  /* Secondary button */
+  --btn-secondary-bg:    #1F1F2B;
+  --btn-secondary-fg:    #C9C9D4;
+  --btn-secondary-hover: #2A2A38;
+
+  /* Shape & depth */
+  --radius-window: 10px;
+  --radius-card:   8px;
+  --radius-input:  6px;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+
+  --font-family: 'Segoe UI', 'SF Pro Text', 'Inter', system-ui, 'Noto Sans', sans-serif;
   --font-mono:   'Consolas', 'Menlo', 'Noto Sans Mono', monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:        #FAFAFC;
+    --surface:   #FFFFFF;
+    --surface1:  #F1F1F5;
+    --surface2:  #E4E4EC;
+    --mantle:    #F1F1F5;
+    --border:    #E2E2EA;
+    --scrollbar: #C8C8D2;
+
+    --text:      #1A1A24;
+    --subtext:   #6B6B78;
+    --muted:     #A0A0AC;
+
+    --accent:       #6D5AE6;
+    --accent-hover: #5B47D9;
+    --accent-2:     #8B6FE8;
+    --accent-soft:  rgba(109, 90, 230, 0.12);
+
+    --success: #2DA44E;
+    --danger:  #E5484D;
+    --warn:    #BF8700;
+
+    --input-bg:     #FFFFFF;
+    --input-border: #D5D5DE;
+
+    --btn-secondary-bg:    #F1F1F5;
+    --btn-secondary-fg:    #3A3A46;
+    --btn-secondary-hover: #E4E4EC;
+
+    --shadow: 0 8px 28px rgba(20, 20, 40, 0.12);
+  }
 }
 
 * {
@@ -46,19 +101,49 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--surface2);
+  background: var(--muted);
+}
+
+/* ── Shared SVG icon helper ─────────────────────────────────────────────
+   Icons live in an injected <symbol> sprite (icons.js) and are referenced
+   with <svg class="ic"><use href="#ic-name"/></svg>. currentColor makes them
+   inherit the control's text color, so they re-tint per theme automatically. */
+.ic {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.ic-sprite { display: none; }
+
+/* Vector spinner (replaces the braille-dot text spinner). The <symbol> draws a
+   3/4 ring; this spins it. */
+.ic-spin {
+  animation: ic-spin 0.7s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes ic-spin {
+  to { transform: rotate(360deg); }
 }

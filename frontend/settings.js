@@ -82,7 +82,7 @@ async function saveConfig(e) {
     if (!apiKey) {
       showStatus('Saved — but set an API key to enable translation.', 'warn');
     } else {
-      showStatus('Saved ✓', false);
+      showStatus('Saved', false);
     }
   } catch (err) {
     showStatus('Error: ' + err, 'error');
@@ -110,7 +110,7 @@ async function testConnection() {
       apiKey:  apiKeyInput.value.trim(),
       model:   modelInput.value.trim(),
     });
-    showStatus('Connection OK ✓ ' + (msg || ''), false);
+    showStatus('Connection OK ' + (msg || ''), false);
   } catch (err) {
     showStatus('Test failed: ' + err, 'error');
   } finally {

@@ -8,17 +8,25 @@
   <link rel="stylesheet" href="chat.css" />
 </head>
 <body>
+  <script src="icons.js"></script>
   <div class="chat-window">
     <!-- Header: the ONLY draggable zone -->
     <div class="header" data-tauri-drag-region>
-      <span class="header-title" id="header-title" data-tauri-drag-region>💬 Chat</span>
-      <button class="close-btn" id="close-btn" title="Close (Esc)">✕</button>
+      <span class="header-title" id="header-title" data-tauri-drag-region>
+        <svg class="ic ic-chat" aria-hidden="true"><use href="#ic-chat"/></svg>
+        <span id="header-label" data-tauri-drag-region>Chat</span>
+      </span>
+      <button class="close-btn" id="close-btn" title="Close (Esc)" aria-label="Close">
+        <svg class="ic" aria-hidden="true"><use href="#ic-close"/></svg>
+      </button>
     </div>
 
     <!-- Context strip (hidden in free-chat mode) -->
     <div class="context-strip" id="context-strip">
       <span class="context-text" id="context-text"></span>
-      <button class="context-clear" id="context-clear" title="Clear context">✕</button>
+      <button class="context-clear" id="context-clear" title="Clear context" aria-label="Clear context">
+        <svg class="ic" aria-hidden="true"><use href="#ic-close"/></svg>
+      </button>
     </div>
 
     <!-- Scrollable transcript -->
