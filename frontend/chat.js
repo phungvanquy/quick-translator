@@ -50,9 +50,21 @@ function addUserMessage(text) {
 function addAiMessage() {
   const el = document.createElement('div');
   el.className = 'msg msg-ai';
+  // Seed with a typing indicator until the first chunk arrives.
+  el.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
   transcript.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+// ── Textarea auto-grow ──────────────────────────────────────────────────────
+const INPUT_MAX_PX = 120;
+function autoGrow() {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, INPUT_MAX_PX) + 'px';
+}
+function resetInputHeight() {
+  chatInput.style.height = '';
 }
 
 function scrollToBottom() {
@@ -73,6 +85,7 @@ async function send() {
   if (!question || streaming) return;
 
   chatInput.value = '';
+  resetInputHeight();
   streaming = true;
   sendBtn.disabled = true;
   sendBtn.textContent = '…';
@@ -80,12 +93,17 @@ async function send() {
   addUserMessage(question);
   const aiEl = addAiMessage();
   let full = '';
+  let firstChunk = true;
 
   // Chunk/done listeners are attached once in init(); they update `aiEl` via
   // the shared closure below.
   currentTurn = {
     el: aiEl,
     appendInterim(delta) {
+      if (firstChunk) {
+        aiEl.textContent = ''; // clear the typing indicator before first text
+        firstChunk = false;
+      }
       full += delta;
       aiEl.textContent = full; // interim: plain text while streaming
       scrollToBottom();
@@ -138,8 +156,17 @@ async function init() {
 
   // Send triggers
   sendBtn.addEventListener('click', send);
+  chatInput.addEventListener('input', autoGrow);
   chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); send(); }
+    if (e.key !== 'Enter') return;
+    // Don't send while an IME composition is active (Vietnamese/CJK input):
+    // Enter there confirms the composition, it must not submit the message.
+    if (e.isComposing || e.keyCode === 229) return;
+    // Shift+Enter (without Ctrl) inserts a newline — let the textarea handle it.
+    if (e.shiftKey && !e.ctrlKey) return;
+    // Enter (no Shift) or Ctrl+Enter → send.
+    e.preventDefault();
+    send();
   });
 
   // Context clear

@@ -77,6 +77,13 @@ These require a Windows run with a global keyboard hook + an API key (can't run 
 - [ ] `cargo build` / `cargo tauri build` passes on the Windows CI target
 - [ ] Launching the packaged exe shows NO UAC prompt; Ctrl+C+C / Ctrl+C+Space work over normal windows; hotkey is inactive over an elevated foreground window (Task Manager / admin terminal) unless the app itself is run as administrator
 
+#### UX changes (archived: translate-popup-ux / chat-popup-ux / settings-validation)
+
+- [ ] Translate popup: resizes by dragging its edge; hovering the truncated original shows the full text as a tooltip; the Copy button is disabled while streaming, then copies the plain translation with a "Copied ✓" confirmation once done. If the button shows "Copy failed" (WebView2 blocks `navigator.clipboard.writeText`), switch to the Tauri clipboard-manager plugin + grant the write permission in `capabilities/default.json` (see the archived translate-popup-ux design open question)
+- [ ] Chat input: Enter sends, Shift+Enter inserts a newline (box auto-grows to ~120px then scrolls), Ctrl+Enter also sends, empty/whitespace input does nothing, textarea resets to one line after send; a typing indicator shows in the assistant bubble until the first token, then final markdown renders
+- [ ] Chat input with a Vietnamese/CJK IME: pressing Enter to CONFIRM a composition does NOT send the message
+- [ ] Settings: saving a scheme-less/malformed base_url is blocked inline; empty base_url saves (backend defaults); empty api_key saves with a warning; "Test connection" reports success with a valid key/endpoint/model, a clear auth/HTTP error with a bad key, and a connection error for an unreachable URL — using the current (possibly unsaved) form values
+
 ## Session Rules
 - **On interrupted sessions:** Always audit `git status` and `git diff --stat` first, read changed/new files, then continue from where it stopped — never start from scratch.
 - **All project memory lives in this file (`CLAUDE.md`)** — do NOT use `~/.claude/` memory files.

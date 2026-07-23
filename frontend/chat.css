@@ -123,9 +123,34 @@ html, body {
   color: var(--text);
 }
 
+/* ── Typing indicator (pending assistant response) ──────────────────── */
+.typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 1.4em;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--subtext);
+  animation: typing-blink 1.2s infinite ease-in-out both;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-blink {
+  0%, 80%, 100% { opacity: 0.25; }
+  40%           { opacity: 1; }
+}
+
 /* ── Input bar ──────────────────────────────────────────────────────── */
 .input-bar {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 10px 12px;
   background: var(--surface);
@@ -142,8 +167,12 @@ html, body {
   color: var(--text);
   font-family: var(--font-family);
   font-size: 13px;
+  line-height: 1.4;
   outline: none;
   transition: border-color 0.15s;
+  resize: none;
+  overflow-y: auto;
+  max-height: 120px;
 }
 
 .chat-input:focus {

@@ -44,6 +44,17 @@ fn open_settings_cmd(app: AppHandle) -> Result<(), String> {
     windows::show_settings_window(&app)
 }
 
+/// Test the given endpoint/key/model with a minimal live request (Settings UI).
+/// Takes current-form values so the user can test before saving.
+#[tauri::command]
+async fn test_connection(
+    base_url: String,
+    api_key: String,
+    model: String,
+) -> Result<String, String> {
+    api::test_connection(base_url, api_key, model).await
+}
+
 // ── Translate trigger ─────────────────────────────────────────────────────────
 
 /// Called from hotkey.rs via tauri::async_runtime when Ctrl+C+C fires.
@@ -216,7 +227,8 @@ fn main() {
             get_config,
             update_config,
             open_settings_cmd,
-            chat_send
+            chat_send,
+            test_connection
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

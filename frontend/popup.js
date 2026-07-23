@@ -27,6 +27,7 @@ const originalText    = document.getElementById('original-text');
 const spinner         = document.getElementById('spinner');
 const translationText = document.getElementById('translation-text');
 const closeBtn        = document.getElementById('close-btn');
+const copyBtn         = document.getElementById('copy-btn');
 
 // ── Spinner frames (braille dots, matching Python constants.py) ───────────────
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -68,6 +69,7 @@ async function init() {
 
   langLabel.textContent = '⟶  ' + lang;
   originalText.textContent = truncate(original);
+  originalText.title = original; // full untruncated text on hover
 
   startSpinner();
 
@@ -101,9 +103,32 @@ async function init() {
     // input renders to an empty string, which is harmless.
     translationText.innerHTML = renderMarkdown(fullText);
     translationText.classList.add('rendered');
+    // Enable copy now that the full result is available (disabled while streaming)
+    if (fullText.trim()) copyBtn.disabled = false;
     // Clean up event listeners
     unlistenChunk();
     unlistenDone();
+  });
+
+  // Copy the raw accumulated translation (not rendered HTML) to the clipboard.
+  let copyResetTimer = null;
+  copyBtn.addEventListener('click', async () => {
+    if (copyBtn.disabled) return;
+    try {
+      await navigator.clipboard.writeText(fullText);
+      copyBtn.classList.remove('copy-error');
+      copyBtn.classList.add('copied');
+      copyBtn.textContent = 'Copied ✓';
+    } catch (_e) {
+      copyBtn.classList.remove('copied');
+      copyBtn.classList.add('copy-error');
+      copyBtn.textContent = 'Copy failed';
+    }
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => {
+      copyBtn.classList.remove('copied', 'copy-error');
+      copyBtn.textContent = 'Copy';
+    }, 1200);
   });
 
   // Escape to close

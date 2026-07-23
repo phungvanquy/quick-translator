@@ -187,6 +187,64 @@ async fn stream_completion(
     let _ = window.emit(done_event, "");
 }
 
+// ── Connection test ───────────────────────────────────────────────────────────
+
+// A test probe is a short-lived, non-streaming request, so unlike the streaming
+// path it is safe to bound the WHOLE request with a total timeout.
+const TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Probe the configured endpoint/key/model with a minimal non-streaming request.
+///
+/// Uses the exact `/chat/completions` path the real translate/chat flow uses, so
+/// a success means model access + auth actually work (a `/models` probe can pass
+/// even when the chosen model is unavailable). Returns Ok(message) on 2xx, or a
+/// human-readable Err describing the HTTP status/body or transport error.
+pub async fn test_connection(base_url: String, api_key: String, model: String) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("No API key set.".to_string());
+    }
+
+    // Reuse resolve_base_url semantics on an ad-hoc Config-like value.
+    let base = if base_url.trim().is_empty() {
+        "https://api.openai.com/v1".to_string()
+    } else {
+        base_url.trim_end_matches('/').to_string()
+    };
+    let url = format!("{base}/chat/completions");
+
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(TEST_TOTAL_TIMEOUT)
+        .build()
+        .map_err(|e| format!("client error: {e}"))?;
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_completion_tokens": 1,
+        "stream": false
+    });
+
+    let resp = client
+        .post(&url)
+        .header(AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("connection error: {e}"))?;
+
+    let status = resp.status();
+    if status.is_success() {
+        Ok(format!("OK ({status})"))
+    } else {
+        let body_text = resp.text().await.unwrap_or_default();
+        let snippet: String = body_text.chars().take(200).collect();
+        Err(format!("HTTP {status} — {snippet}"))
+    }
+}
+
 // ── Main translation function ─────────────────────────────────────────────────
 
 /// Run streaming translation and emit events to `window`.
