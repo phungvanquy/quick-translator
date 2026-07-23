@@ -3,7 +3,12 @@ name: Build Quick Translator (Tauri)
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+# Needed so tauri-action can create the GitHub Release when a tag is pushed.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -23,10 +28,19 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # On a tag push (v*), tauri-action builds AND publishes a draft GitHub
+      # Release with the installer attached. On a branch push it only builds
+      # (empty tagName → no release), and the artifacts are uploaded below.
       - name: Build Tauri app (release)
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: src-tauri
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('Quick Translator {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v7
