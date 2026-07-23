@@ -1,5 +1,5 @@
 fn main() {
-    // On Windows, feed our app.manifest (requireAdministrator elevation) into
+    // On Windows, feed our app.manifest (asInvoker execution level) into
     // Tauri's own resource compilation instead of embedding a second resource
     // via winres — two resource compilers both emit a VERSION resource, which
     // makes link.exe fail with CVT1100 "duplicate resource".

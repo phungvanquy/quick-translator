@@ -21,7 +21,7 @@ Prerequisites: a stable Rust toolchain and the Tauri CLI (`cargo install tauri-c
 cargo tauri dev --config src-tauri/tauri.conf.json
 ```
 
-> **Note:** On Windows, run as Administrator — global hotkeys require elevated privileges (the app manifest requests elevation for packaged builds).
+> **Note:** The app runs without elevation (no UAC prompt) and can auto-start from the Startup folder. Because of Windows UIPI, the global hotkey will not fire while an **elevated** window is in the foreground (e.g. Task Manager, an admin terminal, regedit). To use it over such a window, right-click the app → **Run as administrator** for that session.
 
 On first launch, the Settings window opens automatically so you can enter your API key.
 

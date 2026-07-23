@@ -45,7 +45,7 @@ The app was built up in stages. Stages 1 and 2 are implemented and shipping; Sta
 - `rdev::listen` (passive, single thread) for both Ctrl+C+C detection and cursor tracking — NOT the Tauri global-shortcut plugin (cannot express double-tap)
 - `arboard` for clipboard polling
 - `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url support
-- Admin elevation via `src-tauri/app.manifest` (`requireAdministrator`) embedded by `winres` in `build.rs`
+- No admin elevation: `src-tauri/app.manifest` requests `asInvoker` (embedded via `tauri_build::WindowsAttributes::app_manifest` in `build.rs`). Elevation was dropped (change `drop-windows-admin-elevation`) — it was inherited unverified from the Python `--uac-admin` app and cost a UAC prompt on every launch. Windows UIPI means the `rdev` low-level hook won't see input while an *elevated* window is foreground (Task Manager, admin terminal, regedit); "Run as administrator" is the documented per-session workaround for that rare case
 - Config format identical to Python app — `~/.quicktranslator_config.json` is interoperable
 - Live Ctrl-key state via `GetAsyncKeyState` (Windows) in the hotkey handler — parity with Python `keyboard.is_pressed`, avoids stuck-`ctrl_held` desync from a missed KeyRelease
 - Popup streaming uses a `popup://ready` handshake (frontend emits after listeners attach; backend waits with a 2s fallback before streaming) — Tauri events are not buffered, so a fixed sleep dropped early chunks
@@ -75,6 +75,7 @@ These require a Windows run with a global keyboard hook + an API key (can't run 
 - [ ] Custom prompt field loads, saves, resets to default, and blank-saves fall back to the default template
 - [ ] Saving a custom prompt persists to `~/.quicktranslator_config.json` and a subsequent translate uses it
 - [ ] `cargo build` / `cargo tauri build` passes on the Windows CI target
+- [ ] Launching the packaged exe shows NO UAC prompt; Ctrl+C+C / Ctrl+C+Space work over normal windows; hotkey is inactive over an elevated foreground window (Task Manager / admin terminal) unless the app itself is run as administrator
 
 ## Session Rules
 - **On interrupted sessions:** Always audit `git status` and `git diff --stat` first, read changed/new files, then continue from where it stopped — never start from scratch.
