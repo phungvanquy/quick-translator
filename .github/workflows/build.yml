@@ -39,10 +39,14 @@ jobs:
           projectPath: src-tauri
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: ${{ github.ref_type == 'tag' && format('Quick Translator {0}', github.ref_name) || '' }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
 
+      # Only upload Actions artifacts on branch/dispatch builds. On a tag push
+      # the installer is already attached to the GitHub Release above, so
+      # skipping these avoids duplicating the same build in two places.
       - name: Upload EXE artifact
+        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: QuickTranslator-Windows
@@ -50,6 +54,7 @@ jobs:
           retention-days: 30
 
       - name: Upload NSIS installer artifact
+        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: QuickTranslator-Setup
