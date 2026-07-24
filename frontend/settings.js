@@ -37,6 +37,17 @@ function baseUrlError(value) {
   return null;
 }
 
+// True when base_url is a well-formed http:// (not https://) URL — the API key
+// would be sent unencrypted. Empty / https:// / malformed all return false.
+function isInsecureHttp(value) {
+  if (!value) return false;
+  try {
+    return new URL(value).protocol === 'http:';
+  } catch (_e) {
+    return false;
+  }
+}
+
 // ── Load current config ───────────────────────────────────────────────────────
 async function loadConfig() {
   try {
@@ -78,9 +89,12 @@ async function saveConfig(e) {
 
   try {
     await invoke('update_config', { update });
-    // Empty API key is allowed but translate/chat won't work — warn, don't block.
+    // Non-blocking warnings, in priority order: no key (won't work at all) then
+    // insecure http:// (works, but the key travels unencrypted).
     if (!apiKey) {
       showStatus('Saved — but set an API key to enable translation.', 'warn');
+    } else if (isInsecureHttp(baseUrl)) {
+      showStatus('Saved — warning: http:// sends your API key unencrypted.', 'warn');
     } else {
       showStatus('Saved', false);
     }

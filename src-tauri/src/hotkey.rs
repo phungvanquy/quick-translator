@@ -11,16 +11,48 @@
 //! where a missed KeyRelease event would leave a tracked `ctrl_held` flag
 //! stuck true (e.g. when focus moves to an elevated window mid-combo).
 //!
-//! Also tracks the cursor position via MouseMove events, storing it in
-//! LAST_CURSOR_POS (in main.rs) for use when opening the popup.
+//! The cursor position for popup placement is sampled on demand (GetCursorPos)
+//! at the moment a hotkey fires — see `cursor_pos()`. We deliberately do NOT
+//! track MouseMove here: that ran on the system-wide low-level mouse hook and
+//! locked a mutex on every move for data only ever read once per trigger.
 //!
 //! rdev::listen can only be called once per process — this single thread
-//! handles both cursor tracking and hotkey detection.
+//! handles hotkey detection.
 
 use rdev::{listen, Event, EventType, Key};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
+
+// ── On-demand cursor position ─────────────────────────────────────────────────
+// Sampled when a hotkey fires, not tracked per mouse move. GetCursorPos returns
+// physical screen pixels (per-monitor DPI-aware) — the same space rdev reported
+// and that windows::position_at_cursor already treats as physical.
+
+/// Current cursor position in physical screen pixels.
+#[cfg(target_os = "windows")]
+pub fn cursor_pos() -> (f64, f64) {
+    #[repr(C)]
+    struct POINT {
+        x: i32,
+        y: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetCursorPos(point: *mut POINT) -> i32;
+    }
+    let mut p = POINT { x: 100, y: 100 };
+    unsafe {
+        GetCursorPos(&mut p);
+    }
+    (p.x as f64, p.y as f64)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn cursor_pos() -> (f64, f64) {
+    // Non-Windows builds are for CI/type-checking only.
+    (100.0, 100.0)
+}
 
 // ── Live Ctrl-key query ─────────────────────────────────────────────────────
 // Parity with keyboard.is_pressed("ctrl"): read the real OS key state at the
@@ -92,14 +124,10 @@ pub fn spawn_hotkey_listener(app: AppHandle) {
         .spawn(move || {
             let state = Arc::new(Mutex::new(HotkeyState::new()));
 
-            let _ = listen(move |event: Event| match event.event_type {
-                EventType::MouseMove { x, y } => {
-                    *crate::LAST_CURSOR_POS.lock().unwrap() = (x, y);
-                }
-                EventType::KeyPress(key) => {
+            let _ = listen(move |event: Event| {
+                if let EventType::KeyPress(key) = event.event_type {
                     on_key_press(key, &state, &app);
                 }
-                _ => {}
             });
         })
         .expect("failed to spawn rdev-listener thread");
@@ -114,7 +142,10 @@ fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
     }
 
     let now = Instant::now();
-    let mut s = state.lock().unwrap();
+    // Recover on poison: a transient panic elsewhere must not permanently kill
+    // the global hotkey. The guarded state is plain Copy fields with no invariant
+    // a mid-panic write could corrupt dangerously.
+    let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
 
     // Debounce: ignore everything within 0.4s of last trigger
     if let Some(last) = s.last_trigger_time {
@@ -142,22 +173,14 @@ fn on_key_press(key: Key, state: &Arc<Mutex<HotkeyState>>, app: &AppHandle) {
             }
         }
 
-        // Not armed, or arm window expired → arm and schedule reset
+        // Not armed, or arm window expired → arm. No reset thread: the fire
+        // paths above already gate on `now - last_ctrl_c_time < 600ms`, so a
+        // stale `armed` flag can never mis-fire — a later Ctrl+C outside the
+        // window just re-arms with a fresh timestamp. Keeping the hook callback
+        // allocation-free (no per-press thread spawn) matters for the Windows
+        // LowLevelHooksTimeout budget.
         s.armed = true;
         s.last_ctrl_c_time = Some(now);
-        drop(s);
-
-        // Schedule reset after 0.6s — only clears if no newer Ctrl+C arrived
-        let state_clone = state.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(600));
-            let mut st = state_clone.lock().unwrap();
-            if let Some(arm_time) = st.last_ctrl_c_time {
-                if arm_time.elapsed() >= Duration::from_millis(600) {
-                    st.armed = false;
-                }
-            }
-        });
     } else if key == Key::Space && ctrl_is_down() {
         // Ctrl+Space — fires chat only if a Ctrl+C armed the window within 0.6s.
         // Shares the single arm window with the translate double-tap, so a given

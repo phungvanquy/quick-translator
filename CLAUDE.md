@@ -24,9 +24,9 @@ The app was built up in stages. Stages 1 and 2 are implemented and shipping; Sta
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Bootstrap: config load, tray icon, rdev listener spawn, Tauri commands (incl. `chat_send`), translate + chat triggers, entry point |
+| `main.rs` | Bootstrap: single-instance plugin, config load, tray icon, rdev listener spawn, Tauri commands (incl. `chat_send`), translate + chat triggers, entry point |
 | `config.rs` | `Config` struct, load/save (~/.quicktranslator_config.json), `ConfigState` (Mutex) |
-| `hotkey.rs` | rdev passive listener: Ctrl+C+C (translate) + Ctrl+C+Space (chat) state machine + cursor-position tracking |
+| `hotkey.rs` | rdev passive listener: Ctrl+C+C (translate) + Ctrl+C+Space (chat) state machine; `cursor_pos()` samples the cursor on demand (GetCursorPos) at fire time |
 | `clipboard.rs` | `get_clipboard_after_copy`: polls arboard ≤10× @50ms for changed clipboard text |
 | `api.rs` | reqwest + SSE streaming to chat/completions: emits `translate://chunk`/`translate://done` and `chat://chunk`/`chat://done` |
 | `windows.rs` | Create/show translate popup, chat popup, and settings `WebviewWindow` |
@@ -43,8 +43,13 @@ The app was built up in stages. Stages 1 and 2 are implemented and shipping; Sta
 | `settings.html/css/js` | Settings form: api_key, base_url, model, target_language, custom_prompt |
 
 ### Key design decisions
-- `rdev::listen` (passive, single thread) for both Ctrl+C+C detection and cursor tracking — NOT the Tauri global-shortcut plugin (cannot express double-tap)
-- `arboard` for clipboard polling
+- `rdev::listen` (passive, single thread) for Ctrl+C+C / Ctrl+C+Space detection — NOT the Tauri global-shortcut plugin (cannot express double-tap)
+- Cursor position for popup placement is **sampled on demand** via `hotkey::cursor_pos()` (Windows `GetCursorPos`, physical pixels) at the instant a hotkey fires — NOT tracked per `MouseMove` (change `harden-runtime-footprint`). The old approach locked a mutex on the system-wide mouse hook for every mouse move, for data read only once per trigger. `rdev::listen` still installs a mouse LL hook (rdev has no keyboard-only mode), but we no longer do per-event work in it; fully dropping the mouse hook would require replacing `rdev::listen` (deferred — see the change's design.md R2)
+- Hotkey arm-reset is **lazy**: there is no timer/thread clearing `armed`. Both fire paths re-check `now - last_ctrl_c_time < 600ms`, so a stale `armed` can't mis-fire (a later Ctrl+C outside the window just re-arms). This keeps the low-level hook callback allocation-free — spawning a thread per keypress from inside a `WH_KEYBOARD_LL` callback risked the Windows `LowLevelHooksTimeout` (~300ms) dropping events or unhooking the listener (change `harden-runtime-footprint`)
+- The hook thread's state lock **recovers on poison** (`lock().unwrap_or_else(|e| e.into_inner())`) so a transient panic can't permanently kill the global hotkey (change `harden-runtime-footprint`)
+- **Single instance** via `tauri-plugin-single-instance` (registered FIRST in the builder). A second launch runs a callback in the primary instance (opens Settings) instead of installing a second hook set that would double-fire every hotkey (change `harden-runtime-footprint`)
+- `arboard` for clipboard polling. NOTE: the app only *reads* the clipboard; the user's own Ctrl+C presses overwrite it, and we do NOT restore the prior contents (restoring would need continuous clipboard monitoring — considered and rejected in `harden-runtime-footprint` design.md R1)
+- `base_url` with an `http://` scheme is allowed but Settings shows a non-blocking warning that the API key travels unencrypted (change `harden-runtime-footprint`); `https://`/empty stay silent
 - `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url support
 - No admin elevation: `src-tauri/app.manifest` requests `asInvoker` (embedded via `tauri_build::WindowsAttributes::app_manifest` in `build.rs`). Elevation was dropped (change `drop-windows-admin-elevation`) — it was inherited unverified from the Python `--uac-admin` app and cost a UAC prompt on every launch. Windows UIPI means the `rdev` low-level hook won't see input while an *elevated* window is foreground (Task Manager, admin terminal, regedit); "Run as administrator" is the documented per-session workaround for that rare case
 - Config format identical to Python app — `~/.quicktranslator_config.json` is interoperable
@@ -80,6 +85,13 @@ These require a Windows run with a global keyboard hook + an API key (can't run 
 - [ ] Saving a custom prompt persists to `~/.quicktranslator_config.json` and a subsequent translate uses it
 - [ ] `cargo build` / `cargo tauri build` passes on the Windows CI target
 - [ ] Launching the packaged exe shows NO UAC prompt; Ctrl+C+C / Ctrl+C+Space work over normal windows; hotkey is inactive over an elevated foreground window (Task Manager / admin terminal) unless the app itself is run as administrator
+
+#### Runtime footprint (change: harden-runtime-footprint)
+
+- [ ] **Single instance:** launching the exe a second time does NOT start a second process — the running instance surfaces Settings instead; a single Ctrl+C+C / Ctrl+C+Space produces exactly ONE popup and ONE API request (no double-fire)
+- [ ] **Cursor positioning (OQ1):** after switching to `GetCursorPos`, both popups still anchor next to the cursor on a **high-DPI** display and on a **multi-monitor** setup (each monitor, incl. a non-primary at a different scale). If off, mark the process per-monitor-DPI-aware or convert explicitly, and record the outcome here
+- [ ] **http:// warning:** saving a `base_url` like `http://…` still saves but shows the "http:// sends your API key unencrypted" warning; an `https://` or empty base_url shows no such warning
+- [ ] Hotkey still feels responsive under heavy mouse movement / fast typing (no dropped Ctrl+C+C); after the app has run a while the hotkey still fires (listener not silently dead)
 
 #### UX changes (archived: translate-popup-ux / chat-popup-ux / settings-validation)
 

@@ -7,19 +7,12 @@ mod config;
 mod hotkey;
 mod windows;
 
-use std::sync::{LazyLock, Mutex};
-
 use config::{Config, ConfigState, ConfigUpdate};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     AppHandle, Listener, Manager,
 };
-
-// ── Shared cursor position ────────────────────────────────────────────────────
-// Updated by the rdev listener; read when opening the popup.
-pub static LAST_CURSOR_POS: LazyLock<Mutex<(f64, f64)>> =
-    LazyLock::new(|| Mutex::new((100.0, 100.0)));
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
@@ -70,7 +63,7 @@ pub async fn handle_translate_trigger(app: AppHandle) {
 
     let cfg = app.state::<ConfigState>().get();
 
-    let (cx, cy) = *LAST_CURSOR_POS.lock().unwrap();
+    let (cx, cy) = hotkey::cursor_pos();
 
     // Register the readiness listener BEFORE creating the popup, so we can't
     // miss the popup://ready event the webview emits once its listeners are up.
@@ -115,7 +108,7 @@ pub async fn handle_chat_trigger(app: AppHandle) {
         .await
         .unwrap_or_default();
 
-    let (cx, cy) = *LAST_CURSOR_POS.lock().unwrap();
+    let (cx, cy) = hotkey::cursor_pos();
 
     if let Err(e) = windows::show_chat_popup(&app, &selected, cx, cy) {
         eprintln!("chat popup error: {e}");
@@ -148,6 +141,16 @@ fn main() {
     let cfg = config::load();
 
     tauri::Builder::default()
+        // Single instance MUST be the first plugin registered. A second launch
+        // runs this callback in the primary instance instead of installing a
+        // second global hook set (which would double-fire every hotkey).
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // No main window to raise — surface Settings so the user sees the
+            // app is already running.
+            if let Err(e) = windows::show_settings_window(app) {
+                eprintln!("single-instance settings error: {e}");
+            }
+        }))
         .manage(ConfigState::new(cfg.clone()))
         .setup(move |app| {
             // ── Tray menu ──────────────────────────────────────────────────────
