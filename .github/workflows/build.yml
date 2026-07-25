@@ -6,6 +6,12 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
 
+# Deduplicate: if a tag push arrives for the same SHA as a running branch push,
+# cancel the branch run (the tag run produces the release and is the one we want).
+concurrency:
+  group: build-${{ github.sha }}
+  cancel-in-progress: true
+
 # Needed so tauri-action can create the GitHub Release when a tag is pushed.
 permissions:
   contents: write
