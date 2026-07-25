@@ -32,6 +32,13 @@ impl HttpClient {
     }
 }
 
+// ── Model detection ──────────────────────────────────────────────────────────
+
+fn is_reasoning_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("gpt-5") || m.starts_with("o1-") || m.starts_with("o3-")
+}
+
 // ── SSE parsing helpers ───────────────────────────────────────────────────────
 
 /// Minimal deserialisation of one SSE data payload from chat/completions.
@@ -206,7 +213,7 @@ pub async fn test_connection(client: &reqwest::Client, base_url: String, api_key
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": "ping"}],
-        "max_completion_tokens": 1,
+        "max_completion_tokens": 50,
         "stream": false
     });
 
@@ -253,15 +260,19 @@ pub async fn translate_stream(text: String, cfg: Config, client: &reqwest::Clien
         cfg.custom_prompt.clone()
     };
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": cfg.model,
         "messages": [
             {"role": "system", "content": system_content},
             {"role": "user",   "content": text}
         ],
-        "max_completion_tokens": 1000,
+        "max_completion_tokens": 4096,
         "stream": true
     });
+
+    if is_reasoning_model(&cfg.model) {
+        body["reasoning_effort"] = serde_json::json!("none");
+    }
 
     stream_completion(body, &cfg, client, &window, "translate://chunk", "translate://done").await;
 }
@@ -314,7 +325,7 @@ pub async fn chat_stream(
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": messages,
-        "max_completion_tokens": 1000,
+        "max_completion_tokens": 4096,
         "stream": true
     });
 
