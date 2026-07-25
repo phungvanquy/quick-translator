@@ -15,12 +15,22 @@ use serde::Serialize;
 
 use crate::config::Config;
 
-// Connection must establish within this window, or we surface an error instead
-// of spinning forever. The overall request is NOT capped (streaming responses
-// are long-lived); instead each stream read is bounded by STREAM_IDLE_TIMEOUT.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-// Max gap between streamed chunks before we treat the connection as hung.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// App-wide shared HTTP client. Built once at startup, reuses connections and TLS sessions.
+pub struct HttpClient(pub reqwest::Client);
+
+impl HttpClient {
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .expect("failed to build reqwest client");
+        HttpClient(client)
+    }
+}
 
 // ── SSE parsing helpers ───────────────────────────────────────────────────────
 
@@ -68,24 +78,12 @@ fn resolve_base_url(cfg: &Config) -> String {
 async fn stream_completion(
     body: serde_json::Value,
     cfg: &Config,
+    client: &reqwest::Client,
     window: &WebviewWindow,
     chunk_event: &str,
     done_event: &str,
 ) {
     let url = format!("{}/chat/completions", resolve_base_url(cfg));
-
-    let client = match reqwest::Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
-            let _ = window.emit(done_event, "");
-            return;
-        }
-    };
 
     let response = client
         .post(&url)
@@ -193,31 +191,17 @@ async fn stream_completion(
 // path it is safe to bound the WHOLE request with a total timeout.
 const TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Probe the configured endpoint/key/model with a minimal non-streaming request.
-///
-/// Uses the exact `/chat/completions` path the real translate/chat flow uses, so
-/// a success means model access + auth actually work (a `/models` probe can pass
-/// even when the chosen model is unavailable). Returns Ok(message) on 2xx, or a
-/// human-readable Err describing the HTTP status/body or transport error.
-pub async fn test_connection(base_url: String, api_key: String, model: String) -> Result<String, String> {
+pub async fn test_connection(client: &reqwest::Client, base_url: String, api_key: String, model: String) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Err("No API key set.".to_string());
     }
 
-    // Reuse resolve_base_url semantics on an ad-hoc Config-like value.
     let base = if base_url.trim().is_empty() {
         "https://api.openai.com/v1".to_string()
     } else {
         base_url.trim_end_matches('/').to_string()
     };
     let url = format!("{base}/chat/completions");
-
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(TEST_TOTAL_TIMEOUT)
-        .build()
-        .map_err(|e| format!("client error: {e}"))?;
 
     let body = serde_json::json!({
         "model": model,
@@ -230,6 +214,7 @@ pub async fn test_connection(base_url: String, api_key: String, model: String) -
         .post(&url)
         .header(AUTHORIZATION, format!("Bearer {api_key}"))
         .header(CONTENT_TYPE, "application/json")
+        .timeout(TEST_TOTAL_TIMEOUT)
         .json(&body)
         .send()
         .await
@@ -250,7 +235,7 @@ pub async fn test_connection(base_url: String, api_key: String, model: String) -
 /// Run streaming translation and emit events to `window`.
 ///
 /// Called from the async runtime (tokio), spawned by handle_translate_trigger.
-pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) {
+pub async fn translate_stream(text: String, cfg: Config, client: &reqwest::Client, window: WebviewWindow) {
     // No API key → emit message and stop, no HTTP call
     if cfg.api_key.trim().is_empty() {
         let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
@@ -278,7 +263,7 @@ pub async fn translate_stream(text: String, cfg: Config, window: WebviewWindow) 
         "stream": true
     });
 
-    stream_completion(body, &cfg, &window, "translate://chunk", "translate://done").await;
+    stream_completion(body, &cfg, client, &window, "translate://chunk", "translate://done").await;
 }
 
 // ── Chat function ───────────────────────────────────────────────────────────
@@ -292,6 +277,7 @@ pub async fn chat_stream(
     question: String,
     history: Vec<ChatMessage>,
     cfg: Config,
+    client: &reqwest::Client,
     window: WebviewWindow,
 ) {
     // No API key → emit message and stop, no HTTP call
@@ -332,5 +318,5 @@ pub async fn chat_stream(
         "stream": true
     });
 
-    stream_completion(body, &cfg, &window, "chat://chunk", "chat://done").await;
+    stream_completion(body, &cfg, client, &window, "chat://chunk", "chat://done").await;
 }

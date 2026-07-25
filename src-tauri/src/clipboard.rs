@@ -21,9 +21,9 @@ pub fn get_clipboard_after_copy() -> String {
     // Capture the "before" value
     let prev = clipboard.get_text().unwrap_or_default();
 
-    // Poll up to 10× at 50ms
+    // Poll up to 10× at 20ms
     for _ in 0..10 {
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(20));
         let current = clipboard.get_text().unwrap_or_default();
         if !current.is_empty() && current != prev {
             return current.trim().to_string();
