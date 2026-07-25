@@ -5,6 +5,7 @@ mod api;
 mod clipboard;
 mod config;
 mod hotkey;
+mod tts;
 mod windows;
 
 use config::{Config, ConfigState, ConfigUpdate};
@@ -139,6 +140,18 @@ async fn chat_send(
     Ok(())
 }
 
+// ── TTS commands ──────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn tts_speak(state: tauri::State<'_, tts::TtsHandle>, text: String) {
+    state.speak(&text);
+}
+
+#[tauri::command]
+fn tts_stop(state: tauri::State<'_, tts::TtsHandle>) {
+    state.stop();
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -157,6 +170,7 @@ fn main() {
         }))
         .manage(ConfigState::new(cfg.clone()))
         .manage(api::HttpClient::new())
+        .manage(tts::TtsHandle::new())
         .setup(move |app| {
             // ── Tray menu ──────────────────────────────────────────────────────
             let menu = Menu::new(app.handle())?;
@@ -236,7 +250,9 @@ fn main() {
             update_config,
             open_settings_cmd,
             chat_send,
-            test_connection
+            test_connection,
+            tts_speak,
+            tts_stop
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

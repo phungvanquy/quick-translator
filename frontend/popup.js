@@ -5,6 +5,7 @@
 // Access Tauri 2 APIs from the globally injected object (withGlobalTauri: true)
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen, emit } = window.__TAURI__.event;
+const { invoke } = window.__TAURI__.core;
 
 // ── Parse query string parameters ─────────────────────────────────────────────
 function getParams() {
@@ -29,6 +30,7 @@ const translationText = document.getElementById('translation-text');
 const closeBtn        = document.getElementById('close-btn');
 const copyBtn         = document.getElementById('copy-btn');
 const copyLabel       = copyBtn.querySelector('.copy-label');
+const speakBtn        = document.getElementById('speak-btn');
 
 // ── Close ─────────────────────────────────────────────────────────────────────
 let isClosed = false;
@@ -36,6 +38,7 @@ let isClosed = false;
 async function closePopup() {
   if (isClosed) return;
   isClosed = true;
+  invoke('tts_stop').catch(() => {});
   try {
     await getCurrentWindow().close();
   } catch (_e) {
@@ -108,6 +111,11 @@ async function init() {
       copyLabel.textContent = 'Copy';
       copyIcon.setAttribute('href', '#ic-copy');
     }, 1200);
+  });
+
+  // Speak source text aloud
+  speakBtn.addEventListener('click', () => {
+    invoke('tts_speak', { text: original });
   });
 
   // Escape to close

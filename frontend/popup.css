@@ -176,12 +176,31 @@ body {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
 }
 
 .hint {
   font-size: 10px;
   color: var(--muted);
+  flex: 1;
+}
+
+.speak-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-input);
+  line-height: 0;
+  transition: color 0.12s;
+}
+
+.speak-btn:hover {
+  color: var(--accent);
 }
 
 .copy-btn {
