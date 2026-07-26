@@ -31,6 +31,11 @@ const closeBtn        = document.getElementById('close-btn');
 const copyBtn         = document.getElementById('copy-btn');
 const copyLabel       = copyBtn.querySelector('.copy-label');
 const speakBtn        = document.getElementById('speak-btn');
+const errorBox        = document.getElementById('error-box');
+const errorSummary    = document.getElementById('error-summary');
+const errorDetails    = document.getElementById('error-details');
+const errorDetailText = document.getElementById('error-detail-text');
+const retryBtn        = document.getElementById('retry-btn');
 
 // ── Close ─────────────────────────────────────────────────────────────────────
 let isClosed = false;
@@ -46,6 +51,36 @@ async function closePopup() {
   }
 }
 
+// ── Stream state ──────────────────────────────────────────────────────────────
+// Module-scoped because a retry runs a second stream through the same handlers.
+let streamStarted = false;
+let fullText = '';
+let failed = false;
+
+// Return the popup to its loading state so another stream can render into it.
+function resetForStream() {
+  streamStarted = false;
+  fullText = '';
+  failed = false;
+  errorBox.hidden = true;
+  errorDetails.open = false;
+  translationText.textContent = '';
+  translationText.classList.remove('rendered');
+  translationText.style.display = 'none';
+  spinner.style.display = 'flex';
+  copyBtn.disabled = true;
+}
+
+function showError({ summary, detail, retryable }) {
+  failed = true;
+  spinner.style.display = 'none';
+  errorSummary.textContent = summary;
+  errorDetailText.textContent = detail || '';
+  errorDetails.hidden = !detail;
+  retryBtn.hidden = !retryable;
+  errorBox.hidden = false;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   const { original, lang } = getParams();
@@ -54,11 +89,8 @@ async function init() {
   originalText.textContent = truncate(original);
   originalText.title = original; // full untruncated text on hover
 
-  let streamStarted = false;
-  let fullText = '';
-
-  // Listen for translation chunks
-  const unlistenChunk = await listen('translate://chunk', (event) => {
+  // Listeners live for the popup's lifetime: a retry streams through them again.
+  await listen('translate://chunk', (event) => {
     if (!streamStarted) {
       // Hide spinner, show text area on first chunk
       spinner.style.display = 'none';
@@ -71,8 +103,11 @@ async function init() {
     translationText.textContent = fullText;
   });
 
-  // Listen for stream completion
-  const unlistenDone = await listen('translate://done', () => {
+  await listen('translate://error', (event) => showError(event.payload));
+
+  await listen('translate://done', () => {
+    // A failed request already rendered its own state; leave it alone.
+    if (failed) return;
     if (!streamStarted) {
       spinner.style.display = 'none';
       translationText.style.display = 'block';
@@ -84,9 +119,13 @@ async function init() {
     translationText.classList.add('rendered');
     // Enable copy now that the full result is available (disabled while streaming)
     if (fullText.trim()) copyBtn.disabled = false;
-    // Clean up event listeners
-    unlistenChunk();
-    unlistenDone();
+  });
+
+  retryBtn.addEventListener('click', () => {
+    resetForStream();
+    invoke('translate_retry', { text: original }).catch((e) =>
+      showError({ summary: 'Could not start the retry.', detail: String(e), retryable: true })
+    );
   });
 
   // Copy the raw accumulated translation (not rendered HTML) to the clipboard.

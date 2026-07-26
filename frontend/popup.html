@@ -35,6 +35,18 @@
     </div>
     <!-- Translation output (hidden until first chunk) -->
     <div class="translation-text" id="translation-text" style="display:none"></div>
+    <!-- Failure state (hidden unless the request fails) -->
+    <div class="error-box" id="error-box" hidden>
+      <p class="error-summary" id="error-summary"></p>
+      <details class="error-details" id="error-details">
+        <summary class="error-details-toggle">Details</summary>
+        <pre class="error-detail-text" id="error-detail-text"></pre>
+      </details>
+      <button class="btn-retry" id="retry-btn" hidden>
+        <svg class="ic" aria-hidden="true"><use href="#ic-refresh"/></svg>
+        <span>Retry</span>
+      </button>
+    </div>
   </div>
 
   <!-- Footer hint + actions -->

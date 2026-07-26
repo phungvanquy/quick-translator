@@ -272,6 +272,70 @@ html, body {
 }
 .msg-ai li { margin: 2px 0; }
 
+/* ── Failure state inside an assistant bubble ────────────────────────── */
+.msg-error {
+  border: 1px solid var(--danger);
+}
+
+.msg-error .error-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.msg-error .error-summary {
+  color: var(--danger);
+  line-height: 1.5;
+  /* The flex gap already spaces this; the shared .msg-ai p margin would double it. */
+  margin: 0;
+}
+
+.msg-error .error-details {
+  font-size: 11px;
+  max-width: 100%;
+}
+
+.msg-error .error-details-toggle {
+  cursor: pointer;
+  color: var(--subtext);
+  user-select: none;
+}
+
+.msg-error .error-details-toggle:hover {
+  color: var(--text);
+}
+
+.msg-error .error-detail-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--subtext);
+  background: var(--mantle);
+  border-radius: var(--radius-card);
+  padding: 8px 10px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.msg-error .btn-retry {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  font-family: var(--font-family);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.msg-error .btn-retry:hover {
+  background: var(--btn-secondary-hover);
+}
+
 /* ── Image strip (screenshot thumbnails) ─────────────────────────────────── */
 
 .image-strip {

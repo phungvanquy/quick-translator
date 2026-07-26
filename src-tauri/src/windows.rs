@@ -1,6 +1,75 @@
 //! Window management — create/show translation popup and settings windows.
 
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+
+// ── Cursor-anchored popups ────────────────────────────────────────────────────
+
+/// The chrome that differs between the two cursor-anchored popups. Everything
+/// they share lives in `show_cursor_popup`.
+struct PopupSpec {
+    label: &'static str,
+    title: &'static str,
+    url: String,
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+    /// Hidden from the taskbar for ephemeral popups whose content is one hotkey
+    /// press away from being regenerated. A chat session is not: it holds
+    /// history and screenshots, so it must stay reachable via alt-tab after the
+    /// user clicks away.
+    skip_taskbar: bool,
+}
+
+/// Build, position, and show a frameless popup anchored to the cursor.
+///
+/// Built hidden so it can be placed by PHYSICAL pixel before first paint (rdev
+/// reports physical, the builder's `position()` takes logical) — otherwise it
+/// flashes at the wrong spot on high-DPI displays.
+fn show_cursor_popup(
+    app: &AppHandle,
+    spec: PopupSpec,
+    cursor_x: f64,
+    cursor_y: f64,
+) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window(spec.label) {
+        let _ = existing.close();
+    }
+
+    let window = WebviewWindowBuilder::new(app, spec.label, WebviewUrl::App(spec.url.into()))
+        .title(spec.title)
+        .inner_size(spec.width, spec.height)
+        .min_inner_size(spec.min_width, spec.min_height)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(spec.skip_taskbar)
+        .resizable(true)
+        .focused(true)
+        .visible(false)
+        .build()
+        .map_err(|e| format!("failed to create {}: {e}", spec.label))?;
+
+    // This window's own cancellation flag, set only by its own close handler —
+    // a stream left running for a closed window can only bill tokens nobody will
+    // read. Claiming also cancels the stream of the window just replaced above.
+    let cancelled = app
+        .state::<crate::api::StreamRegistry>()
+        .claim(spec.label);
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+    });
+
+    position_at_cursor(&window, spec.width, spec.height, cursor_x, cursor_y);
+
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    Ok(())
+}
 
 // ── Translation popup ─────────────────────────────────────────────────────────
 
@@ -8,9 +77,6 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, Webv
 /// `original`: captured text (may be truncated in HTML layer)
 /// `target_language`: shown in the popup header
 /// `cursor_x`, `cursor_y`: current cursor position in PHYSICAL screen pixels
-///   (rdev reports physical pixels; Tauri's builder `position()` expects logical
-///   pixels, so we instead build the window hidden and position it afterwards
-///   with `set_position(PhysicalPosition)` — correct on any DPI scale).
 ///
 /// If original is empty, does nothing.
 pub fn show_translate_popup(
@@ -24,89 +90,55 @@ pub fn show_translate_popup(
         return Ok(());
     }
 
-    // Close any existing popup before opening a new one
-    if let Some(existing) = app.get_webview_window("translate-popup") {
-        let _ = existing.close();
-    }
+    let url = format!(
+        "popup.html?original={}&lang={}",
+        url_encode(original),
+        url_encode(target_language)
+    );
 
-    let popup_w: f64 = 460.0;
-    let popup_h: f64 = 220.0;
-
-    // URL-encode the init parameters to pass via query string
-    let orig_encoded = url_encode(original);
-    let lang_encoded = url_encode(target_language);
-
-    let url = format!("popup.html?original={}&lang={}", orig_encoded, lang_encoded);
-
-    // Build hidden so we can position by physical pixels before the first paint,
-    // avoiding a flash at the wrong spot on high-DPI displays.
-    let window = WebviewWindowBuilder::new(app, "translate-popup", WebviewUrl::App(url.into()))
-        .title("Quick Translator")
-        .inner_size(popup_w, popup_h)
-        .min_inner_size(360.0, 160.0)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(true)
-        .focused(true)
-        .visible(false)
-        .build()
-        .map_err(|e| format!("failed to create popup: {e}"))?;
-
-    // Anchor the popup to the cursor, clamped to the monitor under the cursor
-    // (DPI-safe, physical-pixel math — see position_at_cursor).
-    position_at_cursor(&window, popup_w, popup_h, cursor_x, cursor_y);
-
-    let _ = window.show();
-    let _ = window.set_focus();
-
-    Ok(())
+    show_cursor_popup(
+        app,
+        PopupSpec {
+            label: "translate-popup",
+            title: "Quick Translator",
+            url,
+            width: 460.0,
+            height: 220.0,
+            min_width: 360.0,
+            min_height: 160.0,
+            skip_taskbar: true,
+        },
+        cursor_x,
+        cursor_y,
+    )
 }
 
 // ── Chat popup ────────────────────────────────────────────────────────────────
 
 /// Create and show the chat popup near the cursor.
 /// `selected`: captured selection text (may be empty → free chat)
-/// `cursor_x`, `cursor_y`: cursor position in PHYSICAL screen pixels (see
-///   show_translate_popup for the DPI rationale — we build hidden then position).
+/// `cursor_x`, `cursor_y`: cursor position in PHYSICAL screen pixels
 pub fn show_chat_popup(
     app: &AppHandle,
     selected: &str,
     cursor_x: f64,
     cursor_y: f64,
 ) -> Result<(), String> {
-    // Close any existing chat popup before opening a new one
-    if let Some(existing) = app.get_webview_window("chat-popup") {
-        let _ = existing.close();
-    }
-
-    let popup_w: f64 = 500.0;
-    let popup_h: f64 = 580.0;
-
-    let sel_encoded = url_encode(selected);
-    let url = format!("chat.html?selected={}", sel_encoded);
-
-    let window = WebviewWindowBuilder::new(app, "chat-popup", WebviewUrl::App(url.into()))
-        .title("Quick Translator — Chat")
-        .inner_size(popup_w, popup_h)
-        .min_inner_size(380.0, 320.0)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(true)
-        .focused(true)
-        .visible(false)
-        .build()
-        .map_err(|e| format!("failed to create chat popup: {e}"))?;
-
-    position_at_cursor(&window, popup_w, popup_h, cursor_x, cursor_y);
-
-    let _ = window.show();
-    let _ = window.set_focus();
-
-    Ok(())
+    show_cursor_popup(
+        app,
+        PopupSpec {
+            label: "chat-popup",
+            title: "Quick Translator — Chat",
+            url: format!("chat.html?selected={}", url_encode(selected)),
+            width: 500.0,
+            height: 580.0,
+            min_width: 380.0,
+            min_height: 320.0,
+            skip_taskbar: false,
+        },
+        cursor_x,
+        cursor_y,
+    )
 }
 
 // ── Cursor-anchored positioning (DPI-safe) ──────────────────────────────────────
@@ -159,6 +191,45 @@ fn position_at_cursor(
     }
 
     let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+// ── Toast (transient notice) ─────────────────────────────────────────────────
+
+/// Show a short-lived notice near the cursor. The window closes itself.
+///
+/// Anchored at the cursor because that is where the user is looking when they
+/// press a hotkey, and `focused(false)` because stealing focus from the app they
+/// are typing in would be worse than the silence this replaces.
+pub fn show_toast(app: &AppHandle, message: &str, cursor_x: f64, cursor_y: f64) {
+    // Reusing one label means a rapid second notice replaces the first rather
+    // than stacking windows over each other.
+    if let Some(existing) = app.get_webview_window("toast") {
+        let _ = existing.close();
+    }
+
+    let toast_w: f64 = 300.0;
+    let toast_h: f64 = 44.0;
+    let url = format!("toast.html?message={}", url_encode(message));
+
+    let window = match WebviewWindowBuilder::new(app, "toast", WebviewUrl::App(url.into()))
+        .title("Quick Translator")
+        .inner_size(toast_w, toast_h)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .visible(false)
+        .build()
+    {
+        Ok(w) => w,
+        // Nothing left to report it with — a toast is the reporting channel.
+        Err(_) => return,
+    };
+
+    position_at_cursor(&window, toast_w, toast_h, cursor_x, cursor_y);
+    let _ = window.show();
 }
 
 // ── Settings window ───────────────────────────────────────────────────────

@@ -90,19 +90,53 @@ async function send() {
 
   chatInput.value = '';
   resetInputHeight();
-  streaming = true;
-  sendBtn.disabled = true;
-  sendBtn.textContent = '…';
+
+  // Multimodal content when images are attached, plain text otherwise.
+  let userContent = question;
+  if (imageUrls.length > 0) {
+    const parts = [{ type: 'text', text: question }];
+    for (const url of imageUrls) {
+      parts.push({ type: 'image_url', image_url: { url } });
+    }
+    userContent = parts;
+  }
+
+  // Recorded BEFORE invoking: the backend sends history verbatim and its last
+  // entry is the question, so it must already be in there.
+  history.push({ role: 'user', content: userContent });
 
   addUserMessage(question);
+  beginTurn();
+  await runTurn();
+}
+
+// Create the assistant bubble and the handlers the chat:// listeners drive.
+// Retry calls this again for the same history entry, so it must not touch
+// `history` — the failed turn's user message is still its last entry.
+function beginTurn() {
   const aiEl = addAiMessage();
   let full = '';
   let firstChunk = true;
 
-  // Chunk/done listeners are attached once in init(); they update `aiEl` via
-  // the shared closure below.
+  streaming = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '…';
+
+  // Ends the turn either way. The attached images are cleared on both paths
+  // because they now live in the history entry — leaving them pending would
+  // re-attach them to the next message as a second copy.
+  const releaseInput = () => {
+    imageUrls = [];
+    updateImageStrip();
+    streaming = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    currentTurn = null;
+  };
+
   currentTurn = {
     el: aiEl,
+    failed: false,
     appendInterim(delta) {
       if (firstChunk) {
         aiEl.textContent = ''; // clear the typing indicator before first text
@@ -112,45 +146,85 @@ async function send() {
       aiEl.textContent = full; // interim: plain text while streaming
       scrollToBottom();
     },
+    fail(error) {
+      this.failed = true;
+      aiEl.textContent = '';
+      aiEl.classList.add('msg-error');
+      aiEl.appendChild(buildErrorNode(error));
+      scrollToBottom();
+      releaseInput();
+    },
     finish() {
+      if (this.failed) return;
       aiEl.innerHTML = renderMarkdown(full); // final: rendered markdown (escaped)
       scrollToBottom();
       // Record the assistant turn and cap history to the last 50 messages
       history.push({ role: 'assistant', content: full.trim() });
       if (history.length > 50) history = history.slice(history.length - 50);
-      // After first send with images, clear image URLs so subsequent
-      // messages don't re-attach them (they're already in history)
-      imageUrls = [];
-      updateImageStrip();
-      streaming = false;
-      sendBtn.disabled = false;
-      sendBtn.textContent = 'Send';
-      currentTurn = null;
+      releaseInput();
     },
   };
+}
 
+// Send whatever is already in `history` and stream the reply into the current
+// bubble.
+async function runTurn() {
   try {
-    // Build the current message content — multimodal if images are attached
-    let userContent = question;
-    if (imageUrls.length > 0) {
-      const parts = [{ type: 'text', text: question }];
-      for (const url of imageUrls) {
-        parts.push({ type: 'image_url', image_url: { url } });
-      }
-      userContent = parts;
-    }
-
-    // Record user turn with the appropriate content type
-    history.push({ role: 'user', content: userContent });
-
-    await invoke('chat_send', { selectedText, question, history });
+    await invoke('chat_send', { selectedText, history });
   } catch (e) {
-    full += `\n⚠ Error: ${e}`;
-    if (currentTurn) currentTurn.finish();
+    if (currentTurn) {
+      currentTurn.fail({
+        summary: 'Could not start the request.',
+        detail: String(e),
+        retryable: true,
+      });
+    }
   }
 }
 
-// The in-flight assistant turn, or null. Set in send(), consumed by listeners.
+// Build the failure display for a bubble: summary, collapsed raw detail, and a
+// retry that replaces the failed bubble with a fresh attempt.
+function buildErrorNode({ summary, detail, retryable }) {
+  const box = document.createElement('div');
+  box.className = 'error-box';
+
+  const summaryEl = document.createElement('p');
+  summaryEl.className = 'error-summary';
+  summaryEl.textContent = summary;
+  box.appendChild(summaryEl);
+
+  if (detail) {
+    const details = document.createElement('details');
+    details.className = 'error-details';
+    const toggle = document.createElement('summary');
+    toggle.className = 'error-details-toggle';
+    toggle.textContent = 'Details';
+    const pre = document.createElement('pre');
+    pre.className = 'error-detail-text';
+    pre.textContent = detail;
+    details.append(toggle, pre);
+    box.appendChild(details);
+  }
+
+  if (retryable) {
+    const retry = document.createElement('button');
+    retry.className = 'btn-retry';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => {
+      if (streaming) return;
+      const failedBubble = box.closest('.msg');
+      if (failedBubble) failedBubble.remove();
+      beginTurn();
+      runTurn();
+    });
+    box.appendChild(retry);
+  }
+
+  return box;
+}
+
+// The in-flight assistant turn, or null. Set in beginTurn(), driven by the
+// chat:// listeners.
 let currentTurn = null;
 
 // ── Image handling ──────────────────────────────────────────────────────────
@@ -220,6 +294,9 @@ async function init() {
   await listen('chat://chunk', (event) => {
     if (currentTurn) currentTurn.appendInterim(event.payload);
   });
+  await listen('chat://error', (event) => {
+    if (currentTurn) currentTurn.fail(event.payload);
+  });
   await listen('chat://done', () => {
     if (currentTurn) currentTurn.finish();
   });
@@ -264,21 +341,13 @@ async function init() {
   // Context clear
   contextClear.addEventListener('click', clearContext);
 
-  // Close: Esc, button
+  // Close only on deliberate action. Unlike the translate popup, this window
+  // holds a conversation and attached screenshots that a stray click elsewhere
+  // must not destroy — so there is no blur-to-close here.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closePopup();
   });
   closeBtn.addEventListener('click', () => closePopup());
-
-  // Blur-to-close, guarded until the window has focused once (parity with popup)
-  let hasFocused = false;
-  await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused) {
-      hasFocused = true;
-    } else if (hasFocused) {
-      closePopup();
-    }
-  });
 
   chatInput.focus();
 }

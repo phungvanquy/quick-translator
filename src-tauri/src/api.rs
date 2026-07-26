@@ -8,6 +8,9 @@
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, WebviewWindow};
 
@@ -29,6 +32,52 @@ impl HttpClient {
             .build()
             .expect("failed to build reqwest client");
         HttpClient(client)
+    }
+}
+
+// ── Stream cancellation ───────────────────────────────────────────────────────
+
+/// Cancellation flags for in-flight streams, one per popup window.
+///
+/// The flag is owned by the *window*, not by the stream: `claim` hands it out
+/// when a window is built and the window's close handler is the only thing that
+/// sets it. Streams merely read whichever flag currently belongs to their target.
+///
+/// This is what makes label reuse safe. Popup labels are fixed constants, so a
+/// second hotkey press closes and rebuilds the same label. Had cancellation been
+/// keyed only by label, the old window's late `Destroyed` event could cancel the
+/// stream that had already started for the *new* window. Instead the old handler
+/// holds its own now-orphaned flag, which no stream reads.
+#[derive(Default)]
+pub struct StreamRegistry(Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+impl StreamRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Issue a fresh flag for a newly built window, cancelling the stream that
+    /// belonged to the window it replaces.
+    pub fn claim(&self, label: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Some(prev) = self.lock().insert(label.to_string(), flag.clone()) {
+            prev.store(true, Ordering::Relaxed);
+        }
+        flag
+    }
+
+    /// The flag a stream targeting `label` must watch.
+    pub fn current(&self, label: &str) -> Arc<AtomicBool> {
+        self.lock()
+            .get(label)
+            .cloned()
+            // No live window claimed this label, so there is nothing to cancel.
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)))
+    }
+
+    /// A transient panic elsewhere must not permanently break cancellation.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -78,20 +127,75 @@ fn resolve_base_url(cfg: &Config) -> String {
     }
 }
 
+// ── Error reporting ───────────────────────────────────────────────────────────
+
+/// A failed request, split so the popup can show one readable line and keep the
+/// raw server response behind a disclosure instead of filling itself with JSON.
+#[derive(Serialize, Clone)]
+struct StreamError {
+    summary: String,
+    detail: String,
+    retryable: bool,
+}
+
+/// Longest raw detail worth keeping — matches the bound `test_connection` uses.
+const DETAIL_MAX: usize = 200;
+
+fn truncate_detail(s: &str) -> String {
+    s.chars().take(DETAIL_MAX).collect()
+}
+
+fn classify_status(status: reqwest::StatusCode, body: &str) -> StreamError {
+    let summary = match status.as_u16() {
+        401 | 403 => "Authentication failed — check your API key in Settings.",
+        429 => "Rate limited — try again in a moment.",
+        404 => "Endpoint not found — check the Base URL in Settings.",
+        500..=599 => "The server reported an error.",
+        _ => "The request was rejected.",
+    };
+    StreamError {
+        summary: format!("{summary} (HTTP {})", status.as_u16()),
+        detail: truncate_detail(body),
+        // Auth and a wrong URL will fail identically until the user fixes
+        // Settings, so offering a retry there would just waste a click.
+        retryable: !matches!(status.as_u16(), 401 | 403 | 404),
+    }
+}
+
+fn classify_transport(e: &reqwest::Error) -> StreamError {
+    let summary = if e.is_connect() {
+        "Could not reach the endpoint — check your connection and Base URL."
+    } else if e.is_timeout() {
+        "The request timed out."
+    } else {
+        "The request failed."
+    };
+    StreamError {
+        summary: summary.to_string(),
+        detail: truncate_detail(&e.to_string()),
+        retryable: true,
+    }
+}
+
 // ── Shared streaming core ─────────────────────────────────────────────────────
 
-/// POST a chat/completions request and stream deltas to `window` via the given
-/// event names. `chunk_event` receives each content delta (String); `done_event`
-/// fires once when the stream ends or errors. Errors are surfaced as a chunk on
-/// `chunk_event` followed by `done_event`, so the popup never hangs.
+/// POST a chat/completions request and stream deltas to `window`.
+///
+/// `flow` is the event namespace (`"translate"` or `"chat"`): deltas go to
+/// `<flow>://chunk`, failures to `<flow>://error`, and `<flow>://done` always
+/// fires last so the popup never hangs. Errors ride their own event rather than
+/// the chunk event so they can't be mistaken for model output.
 async fn stream_completion(
     body: serde_json::Value,
     cfg: &Config,
     client: &reqwest::Client,
     window: &WebviewWindow,
-    chunk_event: &str,
-    done_event: &str,
+    flow: &str,
+    cancelled: &AtomicBool,
 ) {
+    let chunk_event = format!("{flow}://chunk");
+    let done_event = format!("{flow}://done");
+    let error_event = format!("{flow}://error");
     let url = format!("{}/chat/completions", resolve_base_url(cfg));
 
     let response = client
@@ -102,23 +206,24 @@ async fn stream_completion(
         .send()
         .await;
 
+    if cancelled.load(Ordering::Relaxed) {
+        return;
+    }
+
     let resp = match response {
         Ok(r) => {
             if !r.status().is_success() {
                 let status = r.status();
                 let body_text = r.text().await.unwrap_or_default();
-                let _ = window.emit(
-                    chunk_event,
-                    format!("⚠ Error: HTTP {status} — {body_text}"),
-                );
-                let _ = window.emit(done_event, "");
+                let _ = window.emit(&error_event, classify_status(status, &body_text));
+                let _ = window.emit(&done_event, "");
                 return;
             }
             r
         }
         Err(e) => {
-            let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
-            let _ = window.emit(done_event, "");
+            let _ = window.emit(&error_event, classify_transport(&e));
+            let _ = window.emit(&done_event, "");
             return;
         }
     };
@@ -134,10 +239,27 @@ async fn stream_completion(
         let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
             Ok(next) => next,
             Err(_) => {
-                let _ = window.emit(chunk_event, "⚠ Error: response timed out (no data for 60s)");
+                let _ = window.emit(
+                    &error_event,
+                    StreamError {
+                        summary: "The response stalled and timed out.".to_string(),
+                        detail: format!(
+                            "No data received for {}s.",
+                            STREAM_IDLE_TIMEOUT.as_secs()
+                        ),
+                        retryable: true,
+                    },
+                );
                 break;
             }
         };
+
+        // Checked between reads rather than mid-parse, so a partially buffered
+        // SSE line is never treated as complete. Returning drops the stream,
+        // which closes the connection instead of draining the rest of the body.
+        if cancelled.load(Ordering::Relaxed) {
+            return;
+        }
 
         let chunk_result = match next {
             Some(c) => c,
@@ -147,7 +269,7 @@ async fn stream_completion(
         let bytes = match chunk_result {
             Ok(b) => b,
             Err(e) => {
-                let _ = window.emit(chunk_event, format!("⚠ Error: {e}"));
+                let _ = window.emit(&error_event, classify_transport(&e));
                 break;
             }
         };
@@ -171,7 +293,7 @@ async fn stream_completion(
             if let Some(data) = line.strip_prefix("data: ") {
                 let data = data.trim();
                 if data == "[DONE]" {
-                    let _ = window.emit(done_event, "");
+                    let _ = window.emit(&done_event, "");
                     return;
                 }
                 // Parse JSON chunk
@@ -180,7 +302,7 @@ async fn stream_completion(
                         if let Some(choice) = choices.into_iter().next() {
                             if let Some(delta) = choice.delta.content {
                                 if !delta.is_empty() {
-                                    let _ = window.emit(chunk_event, &delta);
+                                    let _ = window.emit(&chunk_event, &delta);
                                 }
                             }
                         }
@@ -191,7 +313,7 @@ async fn stream_completion(
     }
 
     // Stream ended without [DONE]
-    let _ = window.emit(done_event, "");
+    let _ = window.emit(&done_event, "");
 }
 
 // ── Connection test ───────────────────────────────────────────────────────────
@@ -244,7 +366,13 @@ pub async fn test_connection(client: &reqwest::Client, base_url: String, api_key
 /// Run streaming translation and emit events to `window`.
 ///
 /// Called from the async runtime (tokio), spawned by handle_translate_trigger.
-pub async fn translate_stream(text: String, cfg: Config, client: &reqwest::Client, window: WebviewWindow) {
+pub async fn translate_stream(
+    text: String,
+    cfg: Config,
+    client: &reqwest::Client,
+    window: WebviewWindow,
+    registry: &StreamRegistry,
+) {
     // No API key → emit message and stop, no HTTP call
     if cfg.api_key.trim().is_empty() {
         let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
@@ -276,22 +404,25 @@ pub async fn translate_stream(text: String, cfg: Config, client: &reqwest::Clien
         body["reasoning_effort"] = serde_json::json!("none");
     }
 
-    stream_completion(body, &cfg, client, &window, "translate://chunk", "translate://done").await;
+    let cancelled = registry.current(window.label());
+    stream_completion(body, &cfg, client, &window, "translate", &cancelled).await;
 }
 
 // ── Chat function ───────────────────────────────────────────────────────────
 
 /// Run a streaming chat request and emit events to the chat `window`.
 ///
-/// Messages = system prompt (varies on selected text) + prior history + question,
-/// mirroring api.py chat_with_context_stream.
+/// Messages = system prompt (varies on selected text) + history. The frontend
+/// owns the history and its last entry IS the question being asked, so appending
+/// a question here would send it twice — and, for an image turn, twice with
+/// differing content.
 pub async fn chat_stream(
     selected_text: String,
-    question: String,
     history: Vec<ChatMessage>,
     cfg: Config,
     client: &reqwest::Client,
     window: WebviewWindow,
+    registry: &StreamRegistry,
 ) {
     if cfg.api_key.trim().is_empty() {
         let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
@@ -315,13 +446,11 @@ pub async fn chat_stream(
         )
     };
 
-    // messages = [system] + history + [user question]
     let mut messages: Vec<serde_json::Value> =
         vec![serde_json::json!({"role": "system", "content": system_content})];
     for m in &history {
         messages.push(serde_json::json!({"role": m.role, "content": &m.content}));
     }
-    messages.push(serde_json::json!({"role": "user", "content": question}));
 
     // Detect if any message contains image content → use vision model
     let has_image = history.iter().any(|m| {
@@ -349,5 +478,6 @@ pub async fn chat_stream(
         body["reasoning_effort"] = serde_json::json!("none");
     }
 
-    stream_completion(body, &cfg, client, &window, "chat://chunk", "chat://done").await;
+    let cancelled = registry.current(window.label());
+    stream_completion(body, &cfg, client, &window, "chat", &cancelled).await;
 }

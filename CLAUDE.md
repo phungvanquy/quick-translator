@@ -19,18 +19,19 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 | `config.rs` | `Config` struct, load/save (`~/.quicktranslator_config.json`), `ConfigState` (Mutex) |
 | `hotkey.rs` | rdev passive listener; table-driven two-step state machine read from config via `ArcSwap`; `cursor_pos()` samples cursor on demand at fire time |
 | `clipboard.rs` | `get_clipboard_after_copy`: polls arboard ≤10× @50ms for changed text |
-| `api.rs` | reqwest + SSE to chat/completions; emits `translate://chunk\|done`, `chat://chunk\|done`; routes to `vision_model` when the history carries an image |
+| `api.rs` | reqwest + SSE to chat/completions; emits `<flow>://chunk\|done\|error`; routes to `vision_model` when the history carries an image; `StreamRegistry` holds per-window cancellation flags |
 | `screenshot.rs` | xcap multi-monitor capture, crop, JPEG encode (q60 preview / q80 ≤1568px for API); `ScreenshotStore` holds captures in RAM only |
 | `tts.rs` | Read-aloud via the `tts` crate (SAPI on Windows); single active utterance |
-| `windows.rs` | Create/show translate popup, chat popup, settings, and per-monitor selection overlays |
+| `windows.rs` | `show_cursor_popup` (shared builder for both popups, differences in `PopupSpec`), settings, per-monitor selection overlays, and `show_toast` |
 
 ### Frontend (`frontend/`)
 | File | Purpose |
 |---|---|
 | `theme.css` | Indigo tokens (dark+light via `prefers-color-scheme`), `.ic` icon helper, spinner keyframes |
 | `icons.js` | Inline SVG `<symbol>` sprite; injected as first `<body>` child |
-| `popup.*` | Frameless translate popup: draggable, spinner, streaming, Esc+blur close |
-| `chat.*` | Frameless chat popup: context strip, transcript, input bar, streaming bubbles |
+| `popup.*` | Frameless translate popup: draggable, spinner, streaming, error+retry, Esc+blur close |
+| `chat.*` | Frameless chat popup: context strip, transcript, input bar, streaming bubbles, per-turn error+retry. Esc/close only — NO blur close |
+| `toast.*` | Transient cursor-anchored notice; message via query string, self-closes after 2s, never takes focus |
 | `markdown.js` | Minimal XSS-safe markdown→HTML for chat |
 | `overlay.*` | Fullscreen region-select overlay: frozen screenshot on a canvas, drag to select, Esc/right-click cancels |
 | `settings.*` | Form: api_key, base_url, model, vision_model, target_language, custom_prompt, hotkey capture |
@@ -53,6 +54,9 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 - `arboard` polling; app only *reads* the clipboard and does NOT restore prior contents (would need continuous monitoring — rejected).
 - `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url.
 - `api.rs` uses a connect timeout + per-chunk idle timeout so a hung server surfaces an error, not an eternal spinner.
+- **The frontend owns chat history, and it is the ONLY source of the question.** `chat_send` deliberately takes no `question` parameter: the history's last entry *is* the question. It used to take both, and both call sites appended — every turn sent the question twice, and image turns sent it twice with differing content (multimodal copy + text-only copy). The parameter is gone so the duplicate can't come back.
+- **Cancellation flags belong to the window, not the stream** (`api::StreamRegistry`). Popup labels are fixed constants, so a second hotkey press rebuilds the same label. Keyed only by label, the *old* window's late `Destroyed` event would cancel the stream that had already started for the *new* window. `claim` (on window build) hands each window its own flag and retires the previous one; `current` is what a stream reads. Checked once per read, between reads — never mid-parse, or a partial SSE line could be treated as complete.
+- Errors ride `<flow>://error` with `{summary, detail, retryable}`, NOT the chunk event. On the chunk event they were indistinguishable from model output, so they couldn't be styled, collapsed, or retried. Auth/404 are marked non-retryable — they fail identically until Settings changes.
 - Config format is interoperable with the old Python app (`~/.quicktranslator_config.json`).
 - `base_url` with `http://` is allowed but Settings shows a non-blocking "API key travels unencrypted" warning; `https://`/empty stay silent.
 
@@ -61,6 +65,8 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 - **Never `sleep()` then `emit()` at a window you just created.** This bug has now shipped three times (translate chunks, overlay preview, chat image). Events are dropped, not queued, and WebView2 startup is 100–300ms — the payload vanishes with no error. Use a handshake, or better a **pull**: store the payload in managed state and have the frontend `invoke` for it once its listeners are up (`get_overlay_preview`, `take_pending_image`). `take_pending_image` also *takes* rather than clones, so a stale crop can't re-attach to a later chat session. Emitting is only safe at a window already known to be listening.
 - Tray icon is owned by code (`TrayIconBuilder`); `tauri.conf.json` must NOT declare `app.trayIcon` or two icons appear.
 - Blur-to-close only fires after the window gained focus once (built `.focused(true)`) — prevents instant close.
+- **Popup chrome is a recoverability decision, expressed as data** (`PopupSpec` in `windows.rs`). Translate is ephemeral: blur-closes and `skip_taskbar(true)`, since one hotkey press regenerates it. Chat is persistent: NO blur-close and `skip_taskbar(false)`, because it holds conversation history and screenshots that can't be reconstructed — and without a taskbar entry it would be unreachable once it lost focus. This is also what makes `chat://closed` → drop captures correct: close is now always deliberate, so it can't discard images the user still wanted.
+- The toast is `focused(false)` on purpose — stealing focus from the app the user is typing in would be worse than the silence it replaces. That also means it has no blur or key events, so a timer is its only dismissal.
 - **Tauri 2 ACL:** `core:window:default` grants only read/query. `window.close()` needs `core:window:allow-close`; `data-tauri-drag-region` needs `core:window:allow-start-dragging`. Both must be in `capabilities/default.json` or the calls are silently denied. Custom commands + backend-side window calls are NOT ACL-gated.
 - **DPI-safe positioning:** rdev reports PHYSICAL px, `WebviewWindowBuilder::position()` expects LOGICAL px. So build hidden → `set_position(PhysicalPosition)` using the cursor monitor's `scale_factor()`/bounds (`monitor_from_point`) → `show()`+`set_focus()`. Never pass rdev coords to `.position()`.
 - **Overlay sizing + crop scale:** the overlay is sized with `PhysicalSize` after build, not via the builder's logical `inner_size` (which resolves against whatever scale factor the window was created on, not the target monitor's). Order matters — `set_position` BEFORE `set_size`, since moving across monitors makes Windows suggest a rescaled rect. Build `.resizable(true)` so `set_size` is honoured, then `set_resizable(false)`.
@@ -86,7 +92,7 @@ Requires a Windows run with a global keyboard hook + API key (not headless/CI). 
 
 **Core**
 - [ ] Ctrl+C+Space opens chat with selection as context; Ctrl+C+C still translates; neither double-fires
-- [ ] Esc / close button / click-outside close the chat popup; clearing context switches to Free Chat
+- [ ] Esc / close button close the chat popup; clearing context switches to Free Chat. Clicking OUTSIDE must NOT close it (deliberate — see popup chrome note)
 - [ ] Custom prompt loads, saves, resets to default; blank-save falls back to default template; a subsequent translate uses the saved prompt (persisted to `~/.quicktranslator_config.json`)
 - [ ] `cargo build` / `cargo tauri build` passes on Windows CI
 - [ ] Packaged exe shows NO UAC prompt; hotkeys work over normal windows; inactive over an elevated foreground window unless the app itself runs as admin
@@ -100,6 +106,18 @@ Requires a Windows run with a global keyboard hook + API key (not headless/CI). 
 - [ ] Capture → close chat without sending → capture again: the new chat shows only the NEW image (no stale crop resurfacing)
 - [ ] Vision request routes to `vision_model` when set, falls back to `model` when blank
 - [ ] Closing chat / cancelling frees the captures (watch RSS after several captures — images are RAM-only by design)
+
+**Chat correctness + window lifecycle** (fix-chat-correctness-and-window-lifecycle) — not CI-verifiable
+- [ ] **No duplicate question:** with a proxy or verbose server log, confirm a 2-turn chat sends the question ONCE per turn, and an image turn sends one multimodal entry (not that plus a text-only copy)
+- [ ] Chat survives a focus change: click another app mid-conversation → transcript, typed-but-unsent input, and image thumbnails all intact; an in-flight response keeps streaming
+- [ ] Chat is alt-tab-able / appears in the taskbar; translate popup still does NOT
+- [ ] **Cancellation:** close a popup mid-stream → the request stops (watch provider usage or a local server log; it must not run to completion). Two translate triggers in a row → the second popup shows only its own tokens
+- [ ] Closing the translate popup mid-stream does NOT kill an in-flight chat stream
+- [ ] **Empty-clipboard toast:** press the translate hotkey with nothing selected → a notice appears near the cursor, does NOT steal focus (keep typing in the other app), and vanishes on its own. Nothing appears on a successful translate
+- [ ] Error presentation: with a bad API key, the popup shows a readable summary (NOT a raw JSON body); Details expands to the raw response; no Retry offered for auth. With a working key but an unreachable base_url, Retry IS offered and re-issues the request
+- [ ] Chat error: a failed turn shows the error in its bubble, re-enables Send, and Retry replaces the bubble and re-sends the same turn without duplicating it in history
+- [ ] **OQ1:** does chat `always_on_top` still feel right now that it persists and is alt-tab-able? Use it over a real editor for a few minutes; if intrusive, drop always_on_top for chat and record it here
+- [ ] **OQ2:** is the ~2s toast duration right — long enough to read, short enough not to linger? Tune `DISMISS_MS` in `toast.js` if not
 
 **Configurable hotkeys** (configurable-hotkeys)
 - [ ] All three hotkeys re-bind from Settings and take effect WITHOUT restart; the old binding stops firing

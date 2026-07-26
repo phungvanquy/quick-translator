@@ -121,6 +121,8 @@ pub async fn handle_translate_trigger(app: AppHandle) {
 
     if text.trim().is_empty() {
         app.unlisten(ready_handler);
+        // A hotkey that does nothing at all reads as a dead app, so say why.
+        windows::show_toast(&app, "No text selected", cx, cy);
         return;
     }
 
@@ -128,6 +130,7 @@ pub async fn handle_translate_trigger(app: AppHandle) {
     if let Err(e) = windows::show_translate_popup(&app, &text, &cfg.target_language, cx, cy) {
         eprintln!("popup error: {e}");
         app.unlisten(ready_handler);
+        windows::show_toast(&app, "Could not open the translation popup", cx, cy);
         return;
     }
 
@@ -140,7 +143,9 @@ pub async fn handle_translate_trigger(app: AppHandle) {
         None => return,
     };
 
-    api::translate_stream(text, cfg, &app.state::<api::HttpClient>().0, popup_window).await;
+    let client = app.state::<api::HttpClient>();
+    let registry = app.state::<api::StreamRegistry>();
+    api::translate_stream(text, cfg, &client.0, popup_window, registry.inner()).await;
 }
 
 // ── Chat trigger ────────────────────────────────────────────────────────────────
@@ -159,44 +164,65 @@ pub async fn handle_chat_trigger(app: AppHandle) {
 
     if let Err(e) = windows::show_chat_popup(&app, &selected, cx, cy) {
         eprintln!("chat popup error: {e}");
+        windows::show_toast(&app, "Could not open the chat popup", cx, cy);
     }
 }
 
 // ── Chat command (frontend-driven) ────────────────────────────────────────────
 
-/// Stream a chat response for the given question and prior history.
-/// The frontend owns the conversation history and selected-text context; this
-/// command assembles the request and streams chunks back to the chat window.
+/// Re-run a failed translation for the same text, without needing the user to
+/// re-select it. The popup already holds the original text, so no backend state
+/// has to survive the failure.
+#[tauri::command]
+async fn translate_retry(app: AppHandle, text: String) -> Result<(), String> {
+    let cfg = app.state::<ConfigState>().get();
+    let window = app
+        .get_webview_window("translate-popup")
+        .ok_or_else(|| "translate popup window not found".to_string())?;
+    let client = app.state::<api::HttpClient>();
+    let registry = app.state::<api::StreamRegistry>();
+    api::translate_stream(text, cfg, &client.0, window, registry.inner()).await;
+    Ok(())
+}
+
+/// Stream a chat response for the conversation so far.
+/// The frontend owns the conversation history and selected-text context; the
+/// history's last entry is the question being asked, so there is no separate
+/// question parameter to keep in sync with it.
 #[tauri::command]
 async fn chat_send(
     app: AppHandle,
     selected_text: String,
-    question: String,
     history: Vec<api::ChatMessage>,
 ) -> Result<(), String> {
     let cfg = app.state::<ConfigState>().get();
-    let client = &app.state::<api::HttpClient>().0;
     let window = app
         .get_webview_window("chat-popup")
         .ok_or_else(|| "chat popup window not found".to_string())?;
-    api::chat_stream(selected_text, question, history, cfg, client, window).await;
+    let client = app.state::<api::HttpClient>();
+    let registry = app.state::<api::StreamRegistry>();
+    api::chat_stream(selected_text, history, cfg, &client.0, window, registry.inner()).await;
     Ok(())
 }
 
 // ── Screenshot trigger ───────────────────────────────────────────────────────
 
 pub async fn handle_screenshot_trigger(app: AppHandle) {
+    let (cx, cy) = hotkey::cursor_pos();
+
     // Capture all monitors
     let captures = match screenshot::capture_all_monitors() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("screenshot capture failed: {e}");
+            windows::show_toast(&app, "Screen capture failed", cx, cy);
             return;
         }
     };
 
     if captures.is_empty() {
         eprintln!("no monitors captured");
+        windows::show_toast(&app, "Screen capture failed — no monitors found", cx, cy);
         return;
     }
 
@@ -220,9 +246,12 @@ pub async fn handle_screenshot_trigger(app: AppHandle) {
     // Open overlay windows
     if let Err(e) = windows::show_overlay_windows(&app, &monitor_infos) {
         eprintln!("overlay window error: {e}");
-        let store = app.state::<screenshot::ScreenshotStore>();
-        let mut guard = store.0.lock().unwrap();
-        *guard = None;
+        {
+            let store = app.state::<screenshot::ScreenshotStore>();
+            let mut guard = store.0.lock().unwrap();
+            *guard = None;
+        }
+        windows::show_toast(&app, "Could not open the selection overlay", cx, cy);
     }
 }
 
@@ -311,6 +340,7 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
         let (cx, cy) = hotkey::cursor_pos();
         if let Err(e) = windows::show_chat_popup(&app, "", cx, cy) {
             eprintln!("chat popup error: {e}");
+            windows::show_toast(&app, "Could not open the chat popup", cx, cy);
             return;
         }
         // Nothing to send: the popup pulls the crop via take_pending_image once
@@ -352,6 +382,7 @@ fn main() {
         }))
         .manage(ConfigState::new(cfg.clone()))
         .manage(api::HttpClient::new())
+        .manage(api::StreamRegistry::new())
         .manage(tts::TtsHandle::new())
         .manage(parsed_hotkeys.clone())
         .manage(screenshot::ScreenshotStore::new())
@@ -460,6 +491,7 @@ fn main() {
             get_overlay_preview,
             take_pending_image,
             chat_send,
+            translate_retry,
             test_connection,
             tts_speak,
             tts_stop
