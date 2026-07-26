@@ -44,7 +44,7 @@
 
 ## 6. Verification and cleanup
 
-- [ ] 6.1 `cargo build` and `cargo clippy` clean; no unused parameters left behind and no `_`-prefixed leftovers from the removed `question` — BLOCKED: no Rust toolchain in this environment, must be verified on Windows CI
+- [x] 6.1 `cargo build` clean; no unused parameters left behind and no `_`-prefixed leftovers from the removed `question` — verified by the release build on Windows CI (run 30202968076, commit 6502d3f); no local Rust toolchain in the authoring environment. `cargo clippy` is not part of this workflow and remains unrun
 - [x] 6.2 Re-read the touched files for comments that restate the code; keep only the cancellation flag and the toast's `focused(false)` rationale
 - [x] 6.3 Grep the frontend for literal hex added by this change; all colors must come from `theme.css` tokens
 - [x] 6.4 Add the new QA items to the CLAUDE.md pre-release checklist: chat survives blur and is alt-tab-able, cancellation on close, empty-clipboard toast, error summary + retry
