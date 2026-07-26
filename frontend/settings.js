@@ -224,9 +224,15 @@ function codeToKey(code, location) {
   return { label: code, key: code };
 }
 
-function isModifierOnly(code) {
-  return /^(Control|Shift|Alt|Meta)(Left|Right)?$/.test(code);
-}
+// Keys the backend engine can actually map (hotkey.rs map_then_key). RCtrl and
+// RShift are in here because a double-tap hotkey uses a modifier as its "then" —
+// the default screenshot binding is RCtrl → RCtrl.
+const SUPPORTED_THEN = new Set([
+  'RCtrl', 'RShift', 'Space', 'Insert',
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  ...'0123456789',
+  ...Array.from({ length: 12 }, (_, i) => 'F' + (i + 1)),
+]);
 
 // Set up capture on each "then" button
 hotkeyRows.forEach(row => {
@@ -247,8 +253,13 @@ hotkeyRows.forEach(row => {
       btn.blur();
       return;
     }
-    if (isModifierOnly(e.code)) return;
     const { label, key } = codeToKey(e.code, e.location);
+    // Ignore a key the engine can't map rather than storing it: the config would
+    // save and then never fire. Stay in capture mode so the user can try another.
+    if (!SUPPORTED_THEN.has(key)) {
+      btn.textContent = 'Unsupported — try another';
+      return;
+    }
     btn.dataset.key = key;
     btn.textContent = label;
     btn.classList.remove('capturing');

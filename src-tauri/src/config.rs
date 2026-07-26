@@ -100,6 +100,13 @@ impl HotkeyConfig {
             }
             if entry.then.is_empty() {
                 errors.push(format!("{name}: 'then' key is empty"));
+            } else if !crate::hotkey::is_supported_then(&entry.then) {
+                // An unmappable key parses to Key::Unknown, which no real event
+                // carries: the hotkey would never fire and show no reason why.
+                errors.push(format!(
+                    "{name}: 'then' key '{}' is not supported",
+                    entry.then
+                ));
             }
         }
 

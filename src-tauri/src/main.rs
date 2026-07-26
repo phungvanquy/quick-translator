@@ -49,6 +49,20 @@ fn open_settings_cmd(app: AppHandle) -> Result<(), String> {
     windows::show_settings_window(&app)
 }
 
+/// Hand the pending cropped screenshot to a freshly opened chat popup, clearing
+/// it so it is delivered exactly once.
+///
+/// Pull model for the same reason as get_overlay_preview: a backend emit timed
+/// against webview startup gets dropped. Taking rather than cloning also stops a
+/// leftover crop from re-attaching itself to an unrelated later chat session.
+#[tauri::command]
+fn take_pending_image(
+    state: tauri::State<'_, screenshot::ScreenshotStore>,
+) -> Option<String> {
+    let mut guard = state.0.lock().unwrap();
+    guard.as_mut().and_then(|s| s.prepared_image.take())
+}
+
 /// Return the frozen screenshot preview for one overlay window.
 ///
 /// Pull model, not push: the overlay calls this once its listeners/canvas are
@@ -220,12 +234,14 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
 
     // Parse selection rect from event payload
     #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct SelectPayload {
         x: f64,
         y: f64,
         width: f64,
         height: f64,
-        dpr: f64,
+        viewport_w: f64,
+        viewport_h: f64,
         monitor: usize,
     }
 
@@ -235,14 +251,6 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
             eprintln!("overlay select parse error: {e}");
             return;
         }
-    };
-
-    // Convert CSS px to physical px
-    let rect = screenshot::PhysicalRect {
-        x: (payload.x * payload.dpr) as u32,
-        y: (payload.y * payload.dpr) as u32,
-        width: (payload.width * payload.dpr) as u32,
-        height: (payload.height * payload.dpr) as u32,
     };
 
     // Crop from the capture belonging to the monitor the user dragged on —
@@ -266,16 +274,38 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
                 return;
             }
         };
+        // Derive CSS→physical scale from the capture itself rather than trusting
+        // the webview's devicePixelRatio, which can disagree with the monitor's
+        // real scale factor. An under-estimated factor crops a smaller region
+        // that prepare_for_api then upscales — the "zoomed in" symptom.
+        let (img_w, img_h) = (img.width() as f64, img.height() as f64);
+        let sx = if payload.viewport_w > 0.0 { img_w / payload.viewport_w } else { 1.0 };
+        let sy = if payload.viewport_h > 0.0 { img_h / payload.viewport_h } else { 1.0 };
+
+        let rect = screenshot::PhysicalRect {
+            x: (payload.x * sx).round().max(0.0) as u32,
+            y: (payload.y * sy).round().max(0.0) as u32,
+            width: (payload.width * sx).round().max(1.0) as u32,
+            height: (payload.height * sy).round().max(1.0) as u32,
+        };
+
         let cropped = screenshot::crop_region(img, &rect);
         let url = screenshot::prepare_for_api(&cropped);
         state.prepared_image = Some(url.clone());
         url
     };
 
-    // If chat popup is already open, attach image to it
+    // If chat popup is already open, attach image to it. Its listeners are
+    // already attached, so an emit is safe here — and the pending slot must be
+    // cleared so a later fresh popup can't pull this same crop again.
     if let Some(chat_window) = app.get_webview_window("chat-popup") {
         use tauri::Emitter;
         let _ = chat_window.emit("chat://attach-image", &data_url);
+        let store = app.state::<screenshot::ScreenshotStore>();
+        let mut guard = store.0.lock().unwrap();
+        if let Some(s) = guard.as_mut() {
+            s.prepared_image = None;
+        }
     } else {
         // Open chat popup fresh (no text context, image will arrive via event)
         let (cx, cy) = hotkey::cursor_pos();
@@ -283,15 +313,9 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
             eprintln!("chat popup error: {e}");
             return;
         }
-        // Give the webview a moment to set up listeners, then send the image
-        let app2 = app.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            if let Some(w) = app2.get_webview_window("chat-popup") {
-                use tauri::Emitter;
-                let _ = w.emit("chat://attach-image", &data_url);
-            }
-        });
+        // Nothing to send: the popup pulls the crop via take_pending_image once
+        // its listeners are up. Emitting here on a timer would race webview
+        // startup and be dropped, since Tauri events are not buffered.
     }
 }
 
@@ -434,6 +458,7 @@ fn main() {
             update_config,
             open_settings_cmd,
             get_overlay_preview,
+            take_pending_image,
             chat_send,
             test_connection,
             tts_speak,

@@ -224,7 +224,10 @@ async function init() {
     if (currentTurn) currentTurn.finish();
   });
 
-  // Listen for image attachments from the screenshot flow
+  // Image attachments from the screenshot flow arrive two ways:
+  //  - event, when this popup was already open at capture time (listeners up)
+  //  - pull below, when the capture opened this popup (an emit timed against
+  //    webview startup would be dropped — Tauri events are not buffered)
   await listen('chat://attach-image', (event) => {
     attachImage(event.payload);
     // If no text context, switch header to reflect image context
@@ -232,6 +235,16 @@ async function init() {
       headerLabel.textContent = 'Chat';
     }
   });
+
+  try {
+    const pending = await invoke('take_pending_image');
+    if (pending) {
+      attachImage(pending);
+      if (!selectedText.trim()) headerLabel.textContent = 'Chat';
+    }
+  } catch (e) {
+    console.error('pending image fetch failed', e);
+  }
 
   // Send triggers
   sendBtn.addEventListener('click', send);

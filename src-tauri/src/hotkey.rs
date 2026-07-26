@@ -116,6 +116,15 @@ fn parse_prefix(s: &str) -> ParsedPrefix {
     }
 }
 
+/// Whether a "then" key name can be mapped to a real rdev key.
+///
+/// Config validation calls this to reject an unmappable name at save/load time.
+/// Otherwise it parses to `Key::Unknown(0)`, which no real event ever carries —
+/// the hotkey silently never fires, with nothing to tell the user why.
+pub fn is_supported_then(then: &str) -> bool {
+    then == "RCtrl" || then == "RShift" || map_then_key(then).is_some()
+}
+
 fn parse_then(then: &str, prefix: &str) -> (Key, bool) {
     // For double-tap patterns, the "then" key is the same as the prefix key
     if then == "RCtrl" {
@@ -128,6 +137,11 @@ fn parse_then(then: &str, prefix: &str) -> (Key, bool) {
     // For prefix "Ctrl+C" / "Ctrl+Insert", Ctrl is still held when "then" fires
     let ctrl = prefix.starts_with("Ctrl+");
 
+    // Unreachable for a validated config — is_supported_then gates every write.
+    (map_then_key(then).unwrap_or(Key::Unknown(0)), ctrl)
+}
+
+fn map_then_key(then: &str) -> Option<Key> {
     let key = match then {
         "C" => Key::KeyC,
         "Space" => Key::Space,
@@ -179,9 +193,9 @@ fn parse_then(then: &str, prefix: &str) -> (Key, bool) {
         "F10" => Key::F10,
         "F11" => Key::F11,
         "F12" => Key::F12,
-        _ => Key::Unknown(0), // shouldn't happen with validated config
+        _ => return None,
     };
-    (key, ctrl)
+    Some(key)
 }
 
 // ── On-demand cursor position ─────────────────────────────────────────────────

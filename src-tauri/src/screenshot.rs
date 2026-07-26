@@ -5,19 +5,21 @@
 
 use base64::Engine;
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, GenericImageView, RgbaImage};
+use image::{DynamicImage, RgbaImage};
 use std::io::Cursor;
 use std::sync::Mutex;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/// Monitor bounds in physical pixels. No scale factor: the overlay is sized and
+/// positioned in physical pixels, and the crop scale is derived by dividing
+/// these dimensions by the overlay's reported viewport size.
 #[derive(Debug, Clone)]
 pub struct MonitorInfo {
     pub x: i32,
     pub y: i32,
     pub width: u32,
     pub height: u32,
-    pub scale_factor: f32,
 }
 
 /// Physical-pixel rectangle from the overlay selection.
@@ -53,8 +55,6 @@ impl ScreenshotStore {
     }
 }
 
-// PLACEHOLDER_FUNCTIONS
-
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /// Capture all monitors. Returns one (info, image) pair per monitor.
@@ -70,7 +70,6 @@ pub fn capture_all_monitors() -> Result<Vec<(MonitorInfo, RgbaImage)>, String> {
             y: mon.y().map_err(|e| format!("monitor y failed: {e}"))?,
             width: mon.width().map_err(|e| format!("monitor width failed: {e}"))?,
             height: mon.height().map_err(|e| format!("monitor height failed: {e}"))?,
-            scale_factor: mon.scale_factor().map_err(|e| format!("monitor scale failed: {e}"))?,
         };
         let img = mon.capture_image()
             .map_err(|e| format!("capture failed on monitor at ({},{}): {e}", info.x, info.y))?;

@@ -52,6 +52,17 @@ async function init() {
 
 // ── Drawing ──────────────────────────────────────────────────────────────────
 
+// Scale from canvas coordinates to screenshot-image pixels. The screenshot is
+// captured at physical resolution while the canvas is sized in CSS pixels, so
+// these differ on any scaled display. Never reuse a canvas rect as a source
+// rect without this factor.
+function imageScale() {
+  return {
+    sx: img.naturalWidth / canvas.width,
+    sy: img.naturalHeight / canvas.height,
+  };
+}
+
 function drawBase() {
   if (!img) return;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -74,7 +85,8 @@ function drawSelection() {
 
   // Cut out selected area (full brightness)
   if (w > 2 && h > 2) {
-    ctx.drawImage(img, x, y, w, h, x, y, w, h);
+    const { sx, sy } = imageScale();
+    ctx.drawImage(img, x * sx, y * sy, w * sx, h * sy, x, y, w, h);
     // Border
     ctx.strokeStyle = 'rgba(124, 107, 255, 0.8)';
     ctx.lineWidth = 2;
@@ -116,9 +128,15 @@ canvas.addEventListener('mouseup', (e) => {
   // Require minimum selection size
   if (w < 5 || h < 5) return;
 
-  const dpr = window.devicePixelRatio || 1;
+  // Send the canvas size instead of devicePixelRatio: the backend divides its
+  // own capture dimensions by this to get the exact CSS→physical factor. DPR
+  // can disagree with the monitor's real scale factor (per-monitor DPI), and a
+  // factor that is off by even 1.25× crops a smaller region that then gets
+  // upscaled — the "zoomed in" symptom.
   emit('overlay://select', {
-    x, y, width: w, height: h, dpr,
+    x, y, width: w, height: h,
+    viewportW: canvas.width,
+    viewportH: canvas.height,
     monitor: monitorIndex,
   });
 });

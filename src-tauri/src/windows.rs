@@ -1,6 +1,6 @@
 //! Window management — create/show translation popup and settings windows.
 
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
 // ── Translation popup ─────────────────────────────────────────────────────────
 
@@ -189,22 +189,15 @@ pub fn show_settings_window(app: &AppHandle) -> Result<(), String> {
 
 /// Create one fullscreen borderless overlay window per monitor for region selection.
 /// Each window displays the frozen screenshot preview as its background.
-/// Returns the labels of created windows.
 pub fn show_overlay_windows(
     app: &AppHandle,
     monitors: &[crate::screenshot::MonitorInfo],
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     // Close any existing overlays first
     close_overlay_windows(app);
 
-    let mut labels = Vec::new();
-
     for (i, info) in monitors.iter().enumerate() {
         let label = format!("overlay-{i}");
-
-        let scale = info.scale_factor as f64;
-        let logical_w = info.width as f64 / scale;
-        let logical_h = info.height as f64 / scale;
 
         // Only the monitor index goes in the URL — the preview image itself is
         // pulled over IPC. A multi-MB base64 data URL in a query string would
@@ -217,28 +210,37 @@ pub fn show_overlay_windows(
             WebviewUrl::App(url.into()),
         )
             .title("Screenshot")
-            .inner_size(logical_w, logical_h)
+            // Placeholder — the real size is applied below in physical pixels.
+            .inner_size(640.0, 480.0)
             .decorations(false)
             .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
-            .resizable(false)
+            // Built resizable so the set_size below is honoured, then locked.
+            .resizable(true)
             .focused(i == 0)
             .visible(false)
             .build()
             .map_err(|e| format!("failed to create overlay-{i}: {e}"))?;
 
-        // Position at monitor origin using physical pixels
+        // Size and position in physical pixels so the overlay covers exactly the
+        // monitor's capture. The builder's logical inner_size is resolved against
+        // whichever scale factor the window is created on, which is not
+        // necessarily this monitor's — that mismatch skews the CSS→physical
+        // factor the crop is derived from.
+        // Position before size: moving a window onto a monitor with a different
+        // scale factor makes Windows suggest a rescaled rect, which would undo a
+        // size applied first. Sizing last wins.
         let _ = window.set_position(PhysicalPosition::new(info.x as f64, info.y as f64));
+        let _ = window.set_size(PhysicalSize::new(info.width, info.height));
+        let _ = window.set_resizable(false);
         let _ = window.show();
         if i == 0 {
             let _ = window.set_focus();
         }
-
-        labels.push(label);
     }
 
-    Ok(labels)
+    Ok(())
 }
 
 /// Close all overlay windows.
