@@ -60,10 +60,12 @@ struct SseChunk {
 // ── Chat message (frontend ↔ backend) ─────────────────────────────────────────
 
 /// One conversation turn passed from the chat frontend and forwarded to the API.
+/// `content` is serde_json::Value to support both plain strings and multimodal
+/// content arrays (text + image_url) for vision.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: serde_json::Value,
 }
 
 // ── Base URL helper ─────────────────────────────────────────────────────────
@@ -291,7 +293,6 @@ pub async fn chat_stream(
     client: &reqwest::Client,
     window: WebviewWindow,
 ) {
-    // No API key → emit message and stop, no HTTP call
     if cfg.api_key.trim().is_empty() {
         let msg = "⚠ No API key set.\nRight-click the tray icon → Settings.";
         let _ = window.emit("chat://chunk", msg);
@@ -318,16 +319,35 @@ pub async fn chat_stream(
     let mut messages: Vec<serde_json::Value> =
         vec![serde_json::json!({"role": "system", "content": system_content})];
     for m in &history {
-        messages.push(serde_json::json!({"role": m.role, "content": m.content}));
+        messages.push(serde_json::json!({"role": m.role, "content": &m.content}));
     }
     messages.push(serde_json::json!({"role": "user", "content": question}));
 
-    let body = serde_json::json!({
-        "model": cfg.model,
+    // Detect if any message contains image content → use vision model
+    let has_image = history.iter().any(|m| {
+        if let serde_json::Value::Array(parts) = &m.content {
+            parts.iter().any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url"))
+        } else {
+            false
+        }
+    });
+
+    let model = if has_image && !cfg.vision_model.trim().is_empty() {
+        &cfg.vision_model
+    } else {
+        &cfg.model
+    };
+
+    let mut body = serde_json::json!({
+        "model": model,
         "messages": messages,
         "max_completion_tokens": 4096,
         "stream": true
     });
+
+    if is_reasoning_model(model) {
+        body["reasoning_effort"] = serde_json::json!("none");
+    }
 
     stream_completion(body, &cfg, client, &window, "chat://chunk", "chat://done").await;
 }
