@@ -6,7 +6,7 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 ## Build Stages
 - **Stage 1** (shipping) — translate slice: tray, Ctrl+C+C, clipboard, streaming popup, settings, CI
 - **Stage 2** (shipping) — chat popup, Ctrl+C+Space, markdown rendering
-- **Stage 3** (built, unverified on Windows) — TTS read-aloud, configurable hotkeys, screenshot → vision chat. Remaining ideas in "Stage 3 Roadmap"
+- **Stage 3** (built, CI green; manual Windows QA pending) — TTS read-aloud, configurable hotkeys, screenshot → vision chat. Remaining ideas in "Stage 3 Roadmap"
 
 ## Architecture
 
@@ -76,8 +76,8 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 ## Stage 3 Roadmap
 Behaviors worth preserving are captured as OpenSpec specs. (The Python/Tkinter prototype was removed — recoverable from git history.)
 - **TTS read-aloud** — BUILT (`tts.rs`, speaker button in the translate popup). Spec: `production-cleanup-drop-python/specs/tts-read-aloud/`.
-- **Configurable hotkeys** — BUILT. Change `configurable-hotkeys` (29/29 tasks, unarchived, no `specs/` written yet).
-- **Screenshot → vision chat** — BUILT. Change `screenshot-vision-chat` (39/39 tasks, unarchived, no `specs/` written yet). Images live in RAM only, never on disk, and nothing is sent until the user types a question.
+- **Configurable hotkeys** — BUILT + archived. Spec: `openspec/specs/hotkey-config/`.
+- **Screenshot → vision chat** — BUILT + archived. Specs: `openspec/specs/screenshot-capture/` + `vision-chat/`. Images live in RAM only, never on disk, and nothing is sent until the user types a question.
 - **Translation history / log** — idea only. Persist past translations.
 - **Language auto-detection** — idea only. Detect source language instead of assuming.
 
