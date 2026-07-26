@@ -3,10 +3,7 @@
 ## Overview
 Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, press a hotkey, get a streaming translation or a chat popup. Small binary, low idle footprint, compile-time safety.
 
-## Build Stages
-- **Stage 1** (shipping) — translate slice: tray, Ctrl+C+C, clipboard, streaming popup, settings, CI
-- **Stage 2** (shipping) — chat popup, Ctrl+C+Space, markdown rendering
-- **Stage 3** (built, CI green; manual Windows QA pending) — TTS read-aloud, configurable hotkeys, screenshot → vision chat. Remaining ideas in "Stage 3 Roadmap"
+Everything is built and CI-green: translate (Ctrl+C+C), chat (Ctrl+C+Space), TTS read-aloud, configurable hotkeys, screenshot → vision chat. Manual Windows QA is the only thing outstanding before a release.
 
 ## Architecture
 
@@ -39,135 +36,54 @@ Desktop translator & AI chat assistant in Rust + Tauri 2.x. Highlight text, pres
 ### Key design decisions
 
 **Hotkey / input**
-- `rdev::listen` (passive, single thread) detects the double-taps — NOT the Tauri global-shortcut plugin (can't express double-tap).
-- Cursor position for popup placement is sampled **on demand** via `hotkey::cursor_pos()` (`GetCursorPos`, physical px) at fire time — NOT per `MouseMove`. rdev still installs a mouse LL hook (no keyboard-only mode) but does no per-event work; dropping the mouse hook needs replacing `rdev::listen` (deferred).
-- Arm-reset is **lazy** (no timer thread): both fire paths re-check `now - last_ctrl_c_time < 600ms`, so a stale `armed` can't mis-fire. Keeps the LL hook callback allocation-free — spawning a thread inside `WH_KEYBOARD_LL` risked `LowLevelHooksTimeout` (~300ms) dropping/unhooking the listener.
-- Hook state lock **recovers on poison** (`lock().unwrap_or_else(|e| e.into_inner())`) so a transient panic can't permanently kill the hotkey.
-- Live Ctrl state via `GetAsyncKeyState` — avoids stuck-`ctrl_held` desync from a missed KeyRelease.
+- `rdev::listen` (passive, single thread) — the Tauri global-shortcut plugin can't express a double-tap.
+- Cursor position is sampled on demand at fire time (`hotkey::cursor_pos()`, physical px), never per `MouseMove`. rdev still installs a mouse hook but does no per-event work.
+- Arm-reset is lazy (no timer thread): both fire paths re-check `now - last_ctrl_c_time < 600ms`. Spawning a thread inside `WH_KEYBOARD_LL` risks `LowLevelHooksTimeout` (~300ms) unhooking the listener, so the callback stays allocation-free.
+- Hook state lock recovers on poison, so a transient panic can't permanently kill the hotkey. Ctrl state comes from `GetAsyncKeyState`, not a cached flag that a missed KeyRelease would desync.
+- **Hotkey "then" keys must round-trip.** `SUPPORTED_THEN` (`settings.js`) and `is_supported_then` (backend, enforced in `HotkeyConfig::validate`) must stay in sync — an unmapped name parses to `Key::Unknown(0)`, which no real event carries, so the binding saves fine and then silently never fires. Keep RCtrl/RShift in both: double-tap uses a modifier as its "then".
 
 **Process / lifecycle**
-- **Single instance** via `tauri-plugin-single-instance` (registered FIRST). Second launch opens Settings in the primary instance instead of installing a second hook set (which would double-fire every hotkey).
-- Tray-app lifecycle: Tauri exits on last-window-close, so `main.rs` uses `.build().run(|_,ev| …)` and calls `api.prevent_exit()` on `RunEvent::ExitRequested { code: None, .. }` (window close), letting `Some(_)` through (tray Quit → `app.exit`). Without this, closing a popup kills the app.
-- No admin elevation: `app.manifest` requests `asInvoker` (embedded via `build.rs`). Windows UIPI means the hook won't see input while an *elevated* window is foreground; "Run as administrator" is the per-session workaround.
+- **Single instance** via `tauri-plugin-single-instance`, registered FIRST. A second process would install a second hook set and double-fire every hotkey; instead it surfaces Settings.
+- Tray-app lifecycle: Tauri exits on last-window-close, so `main.rs` calls `api.prevent_exit()` on `RunEvent::ExitRequested { code: None, .. }` (window close) and lets `Some(_)` through (tray Quit). Without it, closing a popup kills the app.
+- No elevation: `app.manifest` requests `asInvoker`. Windows UIPI means the hook is blind while an elevated window is foreground; running as admin is the per-session workaround.
 
 **API / clipboard / config**
-- `arboard` polling; app only *reads* the clipboard and does NOT restore prior contents (would need continuous monitoring — rejected).
-- `reqwest` + manual SSE parsing (not async-openai) for arbitrary base_url.
-- `api.rs` uses a connect timeout + per-chunk idle timeout so a hung server surfaces an error, not an eternal spinner.
-- **The frontend owns chat history, and it is the ONLY source of the question.** `chat_send` deliberately takes no `question` parameter: the history's last entry *is* the question. It used to take both, and both call sites appended — every turn sent the question twice, and image turns sent it twice with differing content (multimodal copy + text-only copy). The parameter is gone so the duplicate can't come back.
-- **Cancellation flags belong to the window, not the stream** (`api::StreamRegistry`). Popup labels are fixed constants, so a second hotkey press rebuilds the same label. Keyed only by label, the *old* window's late `Destroyed` event would cancel the stream that had already started for the *new* window. `claim` (on window build) hands each window its own flag and retires the previous one; `current` is what a stream reads. Checked once per read, between reads — never mid-parse, or a partial SSE line could be treated as complete.
-- Errors ride `<flow>://error` with `{summary, detail, retryable}`, NOT the chunk event. On the chunk event they were indistinguishable from model output, so they couldn't be styled, collapsed, or retried. Auth/404 are marked non-retryable — they fail identically until Settings changes.
-- Config format is interoperable with the old Python app (`~/.quicktranslator_config.json`).
-- `base_url` with `http://` is allowed but Settings shows a non-blocking "API key travels unencrypted" warning; `https://`/empty stay silent.
+- `arboard` polling; the app only *reads* the clipboard and does not restore prior contents (would need continuous monitoring — rejected).
+- `reqwest` + manual SSE parsing (not async-openai) so any base_url works. Connect timeout + per-chunk idle timeout, so a hung server surfaces an error instead of an eternal spinner.
+- **The frontend owns chat history and is the ONLY source of the question.** `chat_send` deliberately takes no `question` parameter — the history's last entry *is* the question. Passing both made every turn send it twice.
+- **Cancellation flags belong to the window, not the stream** (`api::StreamRegistry`). Popup labels are fixed constants, so keying by label alone let a closed window's late `Destroyed` cancel the *next* window's stream. `claim` (on window build) hands each window its own flag and retires the previous one. Checked between reads, never mid-parse.
+- Errors ride `<flow>://error` with `{summary, detail, retryable}`, NOT the chunk event — on the chunk event they were indistinguishable from model output and couldn't be styled or retried. Auth/404 are non-retryable.
+- Config is interoperable with the old Python app (`~/.quicktranslator_config.json`). `http://` base_url saves with a non-blocking "API key travels unencrypted" warning.
 
 **Windows / UI (Tauri gotchas)**
-- Popup streaming uses a `popup://ready` handshake (frontend emits after listeners attach; backend waits, 2s fallback) — Tauri events aren't buffered, so a fixed sleep dropped early chunks.
-- **Never `sleep()` then `emit()` at a window you just created.** This bug has now shipped three times (translate chunks, overlay preview, chat image). Events are dropped, not queued, and WebView2 startup is 100–300ms — the payload vanishes with no error. Use a handshake, or better a **pull**: store the payload in managed state and have the frontend `invoke` for it once its listeners are up (`get_overlay_preview`, `take_pending_image`). `take_pending_image` also *takes* rather than clones, so a stale crop can't re-attach to a later chat session. Emitting is only safe at a window already known to be listening.
+- **Never `sleep()` then `emit()` at a window you just created.** This has shipped three times (translate chunks, overlay preview, chat image). Events are dropped, not queued, and WebView2 takes 100–300ms to start — the payload vanishes silently. Use a handshake (`popup://ready`) or better a **pull**: store the payload in managed state and let the frontend `invoke` for it once listeners are up (`get_overlay_preview`, `take_pending_image`). `take_pending_image` *takes* rather than clones, so a stale crop can't re-attach to a later session.
+- **An "unfocused" event is not proof the user left.** Interactions *inside* the popup drop webview focus on Windows too, and closing on the raw event made the translate popup vanish on a header click. `data-tauri-drag-region` is the main offender: `ReleaseCapture()` + `WM_NCLBUTTONDOWN` hands the window to the OS move loop, which reports the webview unfocused mid-drag; native calls (TTS/SAPI, clipboard) flicker focus similarly. `installBlurToClose` in `popup.js` suppresses blur while a drag-region mousedown is live, otherwise waits 200ms and re-queries `isFocused()` (a query, so `core:window:default` already allows it). The drag flag needs a backstop timer as well as `mouseup`, because the move loop can swallow the mouseup and a stuck flag would kill blur-close permanently.
+- **Popup chrome is a recoverability decision, expressed as data** (`PopupSpec` in `windows.rs`). Translate is ephemeral: blur-closes, `skip_taskbar(true)`, one hotkey press regenerates it. Chat is persistent: NO blur-close, `skip_taskbar(false)`, because it holds history and screenshots that can't be reconstructed and would be unreachable without a taskbar entry. That is also what makes `chat://closed` → drop captures correct: close is always deliberate.
+- Blur-to-close only fires after the window gained focus once (built `.focused(true)`).
+- The toast is `focused(false)` on purpose — stealing focus from the app being typed in would be worse than the silence it replaces. It therefore has no blur or key events, so a timer is its only dismissal.
+- **Tauri 2 ACL:** `core:window:default` grants read/query only. `window.close()` needs `core:window:allow-close`, `data-tauri-drag-region` needs `core:window:allow-start-dragging` — both in `capabilities/default.json` or the calls are silently denied. Custom commands and backend-side window calls are NOT ACL-gated.
+- **DPI-safe positioning:** rdev reports PHYSICAL px, the builder's `position()` takes LOGICAL px. Build hidden → `set_position(PhysicalPosition)` using the cursor monitor's `scale_factor()`/bounds (`monitor_from_point`) → `show()` + `set_focus()`. Never pass rdev coords to `.position()`.
+- **Overlay sizing:** size with `PhysicalSize` after build, not the builder's logical `inner_size` (which resolves against the creating monitor's scale, not the target's). `set_position` BEFORE `set_size` — moving across monitors makes Windows suggest a rescaled rect. Build `.resizable(true)` so `set_size` is honoured, then `set_resizable(false)`.
+- **Don't trust `devicePixelRatio` for the crop.** It can disagree with the monitor's real scale factor; a factor off by 1.25× crops a smaller region that gets upscaled and looks "zoomed in". The overlay reports its canvas size and the backend derives `capture_width / viewport_width`, self-calibrating. Same trap inside the canvas: a rect in CSS px is not a valid `drawImage` *source* rect against a physical-res image.
 - Tray icon is owned by code (`TrayIconBuilder`); `tauri.conf.json` must NOT declare `app.trayIcon` or two icons appear.
-- Blur-to-close only fires after the window gained focus once (built `.focused(true)`) — prevents instant close.
-- **Popup chrome is a recoverability decision, expressed as data** (`PopupSpec` in `windows.rs`). Translate is ephemeral: blur-closes and `skip_taskbar(true)`, since one hotkey press regenerates it. Chat is persistent: NO blur-close and `skip_taskbar(false)`, because it holds conversation history and screenshots that can't be reconstructed — and without a taskbar entry it would be unreachable once it lost focus. This is also what makes `chat://closed` → drop captures correct: close is now always deliberate, so it can't discard images the user still wanted.
-- The toast is `focused(false)` on purpose — stealing focus from the app the user is typing in would be worse than the silence it replaces. That also means it has no blur or key events, so a timer is its only dismissal.
-- **Tauri 2 ACL:** `core:window:default` grants only read/query. `window.close()` needs `core:window:allow-close`; `data-tauri-drag-region` needs `core:window:allow-start-dragging`. Both must be in `capabilities/default.json` or the calls are silently denied. Custom commands + backend-side window calls are NOT ACL-gated.
-- **DPI-safe positioning:** rdev reports PHYSICAL px, `WebviewWindowBuilder::position()` expects LOGICAL px. So build hidden → `set_position(PhysicalPosition)` using the cursor monitor's `scale_factor()`/bounds (`monitor_from_point`) → `show()`+`set_focus()`. Never pass rdev coords to `.position()`.
-- **Overlay sizing + crop scale:** the overlay is sized with `PhysicalSize` after build, not via the builder's logical `inner_size` (which resolves against whatever scale factor the window was created on, not the target monitor's). Order matters — `set_position` BEFORE `set_size`, since moving across monitors makes Windows suggest a rescaled rect. Build `.resizable(true)` so `set_size` is honoured, then `set_resizable(false)`.
-- **Don't trust `devicePixelRatio` for the crop.** It can disagree with the monitor's real scale factor. The overlay reports its canvas size and the backend derives the factor as `capture_width / viewport_width`, self-calibrating. A factor off by 1.25× crops a smaller region that then gets upscaled — looks like the screenshot is "zoomed in". Same trap inside the canvas: a rect in CSS px is not a valid `drawImage` *source* rect against a physical-res image.
-- **Hotkey "then" keys must round-trip.** `settings.js` `codeToKey` has a catch-all that can emit names (`LCtrl`, `Num0`, `ArrowUp`) the engine's `map_then_key` doesn't map. Those parse to `Key::Unknown(0)`, which no real event carries — the hotkey saves fine and then silently never fires. `SUPPORTED_THEN` (frontend) and `is_supported_then` (backend, enforced in `HotkeyConfig::validate`) must stay in sync; keep RCtrl/RShift in both since double-tap uses a modifier as its "then".
 
 **Theme / assets**
-- Indigo accent (`#7C6BFF` dark / `#6D5AE6` light); dark+light driven purely by `@media (prefers-color-scheme)` in `theme.css` — one token set, no toggle, no JS. No literal hex outside `theme.css` except `#ffffff` on colored buttons.
-- All glyphs are a shared inline-SVG `<symbol>` sprite (`icons.js`), `<use href="#ic-…"/>`, `currentColor` so they re-tint per theme/state. Paths adapted from MIT Lucide.
-- Popups use `.transparent(true)` for rounded corners + shadow via CSS on `body`/`.chat-window` (Settings stays decorated). **OQ1 (unverified):** confirm on real Windows that transparency keeps shadow + always-on-top + positioning; if not, fall back to opaque + CSS `border-radius` (square corners) and record it here.
-- App icon: two-arrows glyph on indigo gradient (`icons/icon.png` + `.ico`), generated by committed `icons/generate_icon.py`. Tray uses `default_window_icon()`.
+- Indigo accent (`#7C6BFF` dark / `#6D5AE6` light); dark+light comes purely from `@media (prefers-color-scheme)` in `theme.css` — one token set, no toggle, no JS. No literal hex outside `theme.css` except `#ffffff` on colored buttons.
+- All glyphs are one inline-SVG `<symbol>` sprite (`icons.js`) used via `<use href="#ic-…"/>` with `currentColor`, so they re-tint per theme/state. Paths adapted from MIT Lucide.
+- Popups use `.transparent(true)` for rounded corners + shadow via CSS (Settings stays decorated). **Unverified:** confirm on real Windows that transparency keeps shadow + always-on-top + positioning; else fall back to opaque + CSS `border-radius` and record it here.
+- App icon generated by committed `icons/generate_icon.py`. Tray uses `default_window_icon()`.
 
-## Stage 3 Roadmap
-Behaviors worth preserving are captured as OpenSpec specs. (The Python/Tkinter prototype was removed — recoverable from git history.)
-- **TTS read-aloud** — BUILT (`tts.rs`, speaker button in the translate popup). Spec: `production-cleanup-drop-python/specs/tts-read-aloud/`.
-- **Configurable hotkeys** — BUILT + archived. Spec: `openspec/specs/hotkey-config/`.
-- **Screenshot → vision chat** — BUILT + archived. Specs: `openspec/specs/screenshot-capture/` + `vision-chat/`. Images live in RAM only, never on disk, and nothing is sent until the user types a question.
-- **Translation history / log** — idea only. Persist past translations.
-- **Language auto-detection** — idea only. Detect source language instead of assuming.
-
-## Pre-release Manual QA Checklist
-Requires a Windows run with a global keyboard hook + API key (not headless/CI). Verify before tagging.
-
-**Core**
-- [ ] Ctrl+C+Space opens chat with selection as context; Ctrl+C+C still translates; neither double-fires
-- [ ] Esc / close button close the chat popup; clearing context switches to Free Chat. Clicking OUTSIDE must NOT close it (deliberate — see popup chrome note)
-- [ ] Custom prompt loads, saves, resets to default; blank-save falls back to default template; a subsequent translate uses the saved prompt (persisted to `~/.quicktranslator_config.json`)
-- [ ] `cargo build` / `cargo tauri build` passes on Windows CI
-- [ ] Packaged exe shows NO UAC prompt; hotkeys work over normal windows; inactive over an elevated foreground window unless the app itself runs as admin
-
-**Screenshot → vision chat** (screenshot-vision-chat) — none of this is CI-verifiable
-- [ ] Screenshot hotkey (default RCtrl RCtrl) freezes the screen and shows the dimmed overlay on EVERY monitor; the frozen image is the real screen, not black
-- [ ] **Crop fidelity:** the region sent matches the region dragged — no zoom, no offset. Check on a scaled display (125%/150%) and on a non-primary monitor, since that is where the CSS→physical factor goes wrong
-- [ ] The bright cutout under the cursor tracks the drag accurately (it uses the same scale factor as the crop)
-- [ ] Esc and right-click cancel with no popup; a <5px drag is ignored
-- [ ] Crop opens chat with the thumbnail attached and NOTHING sent until a question is typed; capturing again with chat open attaches a 2nd thumbnail; a 3rd evicts the oldest and its history entry becomes the removed-screenshot placeholder
-- [ ] Capture → close chat without sending → capture again: the new chat shows only the NEW image (no stale crop resurfacing)
-- [ ] Vision request routes to `vision_model` when set, falls back to `model` when blank
-- [ ] Closing chat / cancelling frees the captures (watch RSS after several captures — images are RAM-only by design)
-
-**Chat correctness + window lifecycle** (fix-chat-correctness-and-window-lifecycle) — not CI-verifiable
-- [ ] **No duplicate question:** with a proxy or verbose server log, confirm a 2-turn chat sends the question ONCE per turn, and an image turn sends one multimodal entry (not that plus a text-only copy)
-- [ ] Chat survives a focus change: click another app mid-conversation → transcript, typed-but-unsent input, and image thumbnails all intact; an in-flight response keeps streaming
-- [ ] Chat is alt-tab-able / appears in the taskbar; translate popup still does NOT
-- [ ] **Cancellation:** close a popup mid-stream → the request stops (watch provider usage or a local server log; it must not run to completion). Two translate triggers in a row → the second popup shows only its own tokens
-- [ ] Closing the translate popup mid-stream does NOT kill an in-flight chat stream
-- [ ] **Empty-clipboard toast:** press the translate hotkey with nothing selected → a notice appears near the cursor, does NOT steal focus (keep typing in the other app), and vanishes on its own. Nothing appears on a successful translate
-- [ ] Error presentation: with a bad API key, the popup shows a readable summary (NOT a raw JSON body); Details expands to the raw response; no Retry offered for auth. With a working key but an unreachable base_url, Retry IS offered and re-issues the request
-- [ ] Chat error: a failed turn shows the error in its bubble, re-enables Send, and Retry replaces the bubble and re-sends the same turn without duplicating it in history
-- [ ] **OQ1:** does chat `always_on_top` still feel right now that it persists and is alt-tab-able? Use it over a real editor for a few minutes; if intrusive, drop always_on_top for chat and record it here
-- [ ] **OQ2:** is the ~2s toast duration right — long enough to read, short enough not to linger? Tune `DISMISS_MS` in `toast.js` if not
-
-**Configurable hotkeys** (configurable-hotkeys)
-- [ ] All three hotkeys re-bind from Settings and take effect WITHOUT restart; the old binding stops firing
-- [ ] Re-capturing the screenshot binding to RCtrl RCtrl works (a modifier is a legal "then" for double-tap)
-- [ ] An unsupported key (Left Ctrl, numpad, arrows) is refused at capture with "Unsupported — try another" rather than saved-and-dead
-- [ ] Duplicate combos are blocked inline; a hand-corrupted `hotkeys` block in the config file falls back to defaults with the app still functional
-
-**Runtime footprint** (harden-runtime-footprint)
-- [ ] **Single instance:** second launch does NOT start a second process (surfaces Settings); one hotkey press → exactly ONE popup + ONE API request
-- [ ] **Cursor positioning (OQ1):** both popups anchor next to the cursor on high-DPI and multi-monitor (incl. non-primary at a different scale). If off, mark per-monitor-DPI-aware or convert explicitly, and record here
-- [ ] **http:// warning:** `http://…` base_url saves but warns; `https://`/empty shows no warning
-- [ ] Hotkey stays responsive under heavy mouse/typing (no dropped Ctrl+C+C) and still fires after long uptime
-
-**UX** (translate-popup-ux / chat-popup-ux / settings-validation)
-- [ ] Translate popup: resizes by dragging its edge; truncated original shows full text on hover; Copy is disabled while streaming, then copies plain translation with "Copied ✓". If it shows "Copy failed" (WebView2 blocks `navigator.clipboard`), switch to the Tauri clipboard-manager plugin + grant write permission in `capabilities/default.json`
-- [ ] Chat input: Enter sends, Shift+Enter newline (auto-grows ~120px then scrolls), Ctrl+Enter sends, empty/whitespace does nothing, textarea resets after send; typing indicator until first token, then markdown
-- [ ] Chat input with a Vietnamese/CJK IME: Enter to CONFIRM a composition does NOT send
-- [ ] Settings: malformed/scheme-less base_url blocked inline; empty base_url saves (backend defaults); empty api_key saves with a warning; "Test connection" reports success / auth error / connection error using the current (possibly unsaved) form values
-
-**UI theme** (redesign-ui-indigo-theme)
-- [ ] Both popups + Settings render correctly in dark and light (toggle OS preference); indigo accent for primary/link/focus; nothing washed-out or invisible
-- [ ] All glyphs are SVG (no emoji); icons tint per hover/disabled/theme; spinner spins
-- [ ] Popups show rounded corners + drop shadow, visually layered; chat user bubble uses accent-soft tint, assistant stays neutral. **OQ1:** confirm `transparent:true` didn't break shadow / always-on-top / positioning; else take opaque + CSS-radius fallback and note it
-- [ ] Tray icon + installer show the two-arrows indigo icon, crisp at small sizes
+## Pre-release Manual QA
+Manual Windows QA lives in `openspec/QA-CHECKLIST.md` (needs a real keyboard hook + API key; none of it is CI-verifiable). Work through it before tagging a release.
 
 ## Session Rules
 - **Interrupted sessions:** audit `git status` + `git diff --stat` first, read changed/new files, continue from where it stopped — never start from scratch.
-- **Codebase search — reach for `auggie` first.** The `auggie` MCP server (`.mcp.json`) keeps a live semantic index of this repo. Call `codebase-retrieval` with `directory_path: /root/coding/quick-translator` as the FIRST step whenever the question is "where/how does X work" and the answer spans files not yet read. One call returns Rust + JS + specs + the relevant CLAUDE.md lines, which beats three rounds of grep.
-  - **Use it for:** orienting before any non-trivial change; tracing a flow across backend↔frontend (hotkey → trigger → api → popup event); finding which spec covers a behavior; "is feature X already implemented?"; picking up an interrupted session.
-  - **Skip it for:** an exact symbol or string already known (`grep`), a file whose path is already known (`Read`), anything about git history (not indexed).
-  - Phrase requests as natural-language questions ("How does the popup receive streaming chunks?"), not grep patterns ("find emit(").
-  - Ask ONE broad question over several narrow ones — the index cross-references on its own and each call is a round trip.
-  - It reads the working tree only: no history, no staged-vs-committed distinction, and just-written edits may lag the index. Confirm anything load-bearing with `Read` before editing.
-  - `.augmentignore` excludes archived **delta specs** (`openspec/changes/archive/*/specs/`), build output, and binary icons. Those deltas are verbatim copies of specs already promoted into `openspec/specs/`, so indexing both made one query return 3-4 identical hits and crowded out real code. Archived `proposal.md`/`design.md`/`tasks.md` stay indexed — that rationale exists nowhere else.
-  - `.augmentignore` is read once when the server builds its path filter, so edits to it need an MCP-server restart (`/mcp` → reconnect) before they take effect.
-  - **Fire it automatically at these points** (no need to be asked):
-    - `/opsx:propose` — before writing `proposal.md`, ask "is this already implemented, and what would it touch?" That check is what caught TTS as already-spec'd-but-unbuilt.
-    - `/opsx:apply` — before the first code edit, ask how the target flow currently works, so edits land in the existing pattern.
-    - `/opsx:explore` — first move, to ground the discussion in real code instead of theorizing.
-    - Resuming an interrupted session — pair it with the `git status` audit above.
-    - Any bug report naming a symptom rather than a file ("popup shows nothing", "hotkey stopped firing").
+- **Codebase search — `auggie` first.** The `auggie` MCP server (`.mcp.json`) keeps a live semantic index. Call `codebase-retrieval` (`directory_path: /root/coding/quick-translator`) as the FIRST step for any "where/how does X work" question spanning files not yet read — one broad natural-language question beats several narrow ones or three rounds of grep. Do it unprompted before `/opsx:propose`, `/opsx:apply`, `/opsx:explore`, when resuming a session, and for any bug report naming a symptom rather than a file.
+  - Skip it for a known symbol (`grep`), a known path (`Read`), or git history (not indexed). It reads the working tree only, so just-written edits may lag — confirm anything load-bearing with `Read` before editing.
+  - `.augmentignore` excludes archived delta specs (verbatim duplicates of `openspec/specs/`, they crowded out real code), build output, and binary icons. It is read once at server start, so edits need an MCP restart (`/mcp` → reconnect).
 - **All project memory lives in this file** — do NOT use `~/.claude/` memory files.
 - **Dependencies — minimal, not zero.** Adding a crate is fine when it makes the project meaningfully better and is safe: actively maintained, widely used, trusted source, pinned version, checked against typosquatting. Prefer the lightest option; don't reinvent what a vetted crate does well.
 
-## Identified Improvements
-Carried over from the prototype; NOT re-verified against current Rust code — confirm before acting.
-- **Clipboard capture is polling-based** — fixed retry budget; can miss/return stale text on a slow system.
-- **Completion token cap hardcoded** — long responses can truncate without warning; consider making it configurable.
-- **Chat history sent whole** — capped at 50 messages but the full window is sent each turn.
-- **API key in plaintext JSON** — readable by any process; consider OS keychain.
-- **Settings window fixed size** — may clip on small screens.
-- **Thin test coverage** — only a Node markdown-renderer test; core Rust logic (config, clipboard, SSE) untested.
-- **Missing (low priority):** hotkey customization, proxy support.
+## Roadmap / Known Gaps
+All shipped behavior is specced under `openspec/specs/`. Not built: translation history/log, source-language auto-detection.
+Known weak spots, unverified against current code — confirm before acting: clipboard capture is polling with a fixed retry budget (can return stale text); completion token cap is hardcoded (long replies truncate silently); the whole 50-message chat window is sent each turn; the API key sits in plaintext JSON (OS keychain would be better); the Settings window is fixed-size; test coverage is thin (only a Node markdown test — config/clipboard/SSE untested).

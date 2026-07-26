@@ -51,6 +51,75 @@ async function closePopup() {
   }
 }
 
+// ── Blur-to-close ─────────────────────────────────────────────────────────────
+// Close when the user clicks away — but a raw "unfocused" event is NOT proof
+// they left. Interactions *inside* the popup drop webview focus on Windows too;
+// `data-tauri-drag-region` is the worst offender, since it hands the window to
+// the OS move loop (ReleaseCapture + WM_NCLBUTTONDOWN) which reports the
+// webview unfocused mid-drag. Closing on that made the popup vanish on a header
+// click. Native calls (TTS, clipboard) can flicker focus the same way.
+//
+// So: ignore blur while a drag is live, and otherwise wait a beat and re-ask
+// the window whether it is really unfocused. Focus returns on its own for every
+// in-window cause, so only a genuine click elsewhere survives the grace period.
+const BLUR_GRACE_MS = 200;
+// The move loop can swallow the matching mouseup, so a stuck drag flag would
+// kill blur-to-close for the popup's whole life. This bounds it.
+const DRAG_BACKSTOP_MS = 5000;
+
+async function installBlurToClose(onBlur) {
+  const win = getCurrentWindow();
+  let hasFocused = false;
+  let dragging = false;
+  let closeTimer = null;
+  let dragBackstop = null;
+
+  const cancelPendingClose = () => {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+  };
+
+  const endDrag = () => {
+    dragging = false;
+    clearTimeout(dragBackstop);
+    dragBackstop = null;
+  };
+
+  document.addEventListener('mousedown', (e) => {
+    if (!(e.target instanceof Element)) return;
+    if (!e.target.closest('[data-tauri-drag-region]')) return;
+    endDrag();
+    dragging = true;
+    cancelPendingClose();
+    dragBackstop = setTimeout(endDrag, DRAG_BACKSTOP_MS);
+  });
+  document.addEventListener('mouseup', endDrag);
+
+  await win.onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      // Focus came back, so whatever caused the blur was ours.
+      hasFocused = true;
+      endDrag();
+      cancelPendingClose();
+      return;
+    }
+    // Ignore blur until the window has focused once: a window that never
+    // grabbed focus would otherwise close instantly.
+    if (!hasFocused) return;
+    cancelPendingClose();
+    closeTimer = setTimeout(async () => {
+      closeTimer = null;
+      if (dragging) return;
+      try {
+        if (await win.isFocused()) return;
+      } catch (_e) {
+        // Query failed (window already going away) — fall through and close.
+      }
+      onBlur();
+    }, BLUR_GRACE_MS);
+  });
+}
+
 // ── Stream state ──────────────────────────────────────────────────────────────
 // Module-scoped because a retry runs a second stream through the same handlers.
 let streamStarted = false;
@@ -164,17 +233,9 @@ async function init() {
     }
   });
 
-  // Click outside (blur) to close — but only after the popup has actually
-  // gained focus at least once. Otherwise a window that never grabbed focus
-  // (or a spurious initial "unfocused" event) would close the popup instantly.
-  let hasFocused = false;
-  await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused) {
-      hasFocused = true;
-    } else if (hasFocused) {
-      closePopup();
-    }
-  });
+  // Click outside to close (see installBlurToClose for why this isn't just
+  // "close on unfocused").
+  await installBlurToClose(closePopup);
 
   // Close button
   closeBtn.addEventListener('click', () => closePopup());
