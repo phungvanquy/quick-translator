@@ -5,10 +5,14 @@ mod api;
 mod clipboard;
 mod config;
 mod hotkey;
+mod screenshot;
 mod tts;
 mod windows;
 
+use arc_swap::ArcSwap;
 use config::{Config, ConfigState, ConfigUpdate};
+use hotkey::ParsedHotkeys;
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -26,10 +30,17 @@ fn get_config(state: tauri::State<'_, ConfigState>) -> Config {
 /// Save updated config fields from the Settings UI.
 #[tauri::command]
 fn update_config(
+    app: AppHandle,
     state: tauri::State<'_, ConfigState>,
     update: ConfigUpdate,
 ) -> Result<(), String> {
-    state.update(update)
+    state.update(update)?;
+    // Hot-swap the parsed hotkey table
+    let new_cfg = state.get();
+    let parsed = ParsedHotkeys::from_config(&new_cfg.hotkeys);
+    let hotkey_state = app.state::<Arc<ArcSwap<ParsedHotkeys>>>();
+    hotkey_state.store(Arc::new(parsed));
+    Ok(())
 }
 
 /// Open (or focus) the settings window.
@@ -140,6 +151,134 @@ async fn chat_send(
     Ok(())
 }
 
+// ── Screenshot trigger ───────────────────────────────────────────────────────
+
+pub async fn handle_screenshot_trigger(app: AppHandle) {
+    // Capture all monitors
+    let captures = match screenshot::capture_all_monitors() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("screenshot capture failed: {e}");
+            return;
+        }
+    };
+
+    if captures.is_empty() {
+        eprintln!("no monitors captured");
+        return;
+    }
+
+    // Encode previews for each monitor
+    let previews: Vec<(screenshot::MonitorInfo, String)> = captures
+        .iter()
+        .map(|(info, img)| (info.clone(), screenshot::prepare_preview(img)))
+        .collect();
+
+    // Store full-res captures in state
+    {
+        let store = app.state::<screenshot::ScreenshotStore>();
+        let mut guard = store.0.lock().unwrap();
+        *guard = Some(screenshot::ScreenshotState::new(captures));
+    }
+
+    // Open overlay windows
+    if let Err(e) = windows::show_overlay_windows(&app, &previews) {
+        eprintln!("overlay window error: {e}");
+        let store = app.state::<screenshot::ScreenshotStore>();
+        let mut guard = store.0.lock().unwrap();
+        *guard = None;
+        return;
+    }
+
+    // Send preview to overlay after a short delay for webview init
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        for (i, (_info, preview)) in previews.iter().enumerate() {
+            let label = format!("overlay-{i}");
+            if let Some(w) = app2.get_webview_window(&label) {
+                use tauri::Emitter;
+                let _ = w.emit("overlay://preview", preview);
+            }
+        }
+    });
+}
+
+// ── Overlay select handler ───────────────────────────────────────────────────
+
+async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
+    // Close overlay windows immediately
+    windows::close_overlay_windows(&app);
+
+    // Parse selection rect from event payload
+    #[derive(serde::Deserialize)]
+    struct SelectPayload {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        dpr: f64,
+    }
+
+    let payload: SelectPayload = match serde_json::from_str(event.payload()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("overlay select parse error: {e}");
+            return;
+        }
+    };
+
+    // Convert CSS px to physical px
+    let rect = screenshot::PhysicalRect {
+        x: (payload.x * payload.dpr) as u32,
+        y: (payload.y * payload.dpr) as u32,
+        width: (payload.width * payload.dpr) as u32,
+        height: (payload.height * payload.dpr) as u32,
+    };
+
+    // Crop from stored full-res capture (use first monitor for now)
+    let data_url = {
+        let store = app.state::<screenshot::ScreenshotStore>();
+        let mut guard = store.0.lock().unwrap();
+        let state = match guard.as_mut() {
+            Some(s) => s,
+            None => {
+                eprintln!("no screenshot state available");
+                return;
+            }
+        };
+
+        // Crop from the first monitor's capture (overlay-0 is the focused one)
+        let (_, ref img) = state.captures[0];
+        let cropped = screenshot::crop_region(img, &rect);
+        let url = screenshot::prepare_for_api(&cropped);
+        state.prepared_image = Some(url.clone());
+        url
+    };
+
+    // If chat popup is already open, attach image to it
+    if let Some(chat_window) = app.get_webview_window("chat-popup") {
+        use tauri::Emitter;
+        let _ = chat_window.emit("chat://attach-image", &data_url);
+    } else {
+        // Open chat popup fresh (no text context, image will arrive via event)
+        let (cx, cy) = hotkey::cursor_pos();
+        if let Err(e) = windows::show_chat_popup(&app, "", cx, cy) {
+            eprintln!("chat popup error: {e}");
+            return;
+        }
+        // Give the webview a moment to set up listeners, then send the image
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            if let Some(w) = app2.get_webview_window("chat-popup") {
+                use tauri::Emitter;
+                let _ = w.emit("chat://attach-image", &data_url);
+            }
+        });
+    }
+}
+
 // ── TTS commands ──────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -156,6 +295,9 @@ fn tts_stop(state: tauri::State<'_, tts::TtsHandle>) {
 
 fn main() {
     let cfg = config::load();
+    let parsed_hotkeys = Arc::new(ArcSwap::from_pointee(
+        ParsedHotkeys::from_config(&cfg.hotkeys),
+    ));
 
     tauri::Builder::default()
         // Single instance MUST be the first plugin registered. A second launch
@@ -171,6 +313,8 @@ fn main() {
         .manage(ConfigState::new(cfg.clone()))
         .manage(api::HttpClient::new())
         .manage(tts::TtsHandle::new())
+        .manage(parsed_hotkeys.clone())
+        .manage(screenshot::ScreenshotStore::new())
         .setup(move |app| {
             // ── Tray menu ──────────────────────────────────────────────────────
             let menu = Menu::new(app.handle())?;
@@ -239,9 +383,33 @@ fn main() {
                 });
             }
 
+            // ── Overlay events (screenshot selection) ──────────────────────────
+            let app_select = app.handle().clone();
+            app.listen_any("overlay://select", move |event| {
+                let app = app_select.clone();
+                tauri::async_runtime::spawn(async move {
+                    handle_overlay_select(app, event).await;
+                });
+            });
+
+            let app_cancel = app.handle().clone();
+            app.listen_any("overlay://cancel", move |_event| {
+                windows::close_overlay_windows(&app_cancel);
+                let store = app_cancel.state::<screenshot::ScreenshotStore>();
+                let mut guard = store.0.lock().unwrap();
+                *guard = None;
+            });
+
+            let app_closed = app.handle().clone();
+            app.listen_any("chat://closed", move |_event| {
+                let store = app_closed.state::<screenshot::ScreenshotStore>();
+                let mut guard = store.0.lock().unwrap();
+                *guard = None;
+            });
+
             // ── Spawn combined rdev listener (hotkeys + cursor tracking) ───────
             let app_handle = app.handle().clone();
-            hotkey::spawn_hotkey_listener(app_handle);
+            hotkey::spawn_hotkey_listener(app_handle, parsed_hotkeys.clone());
 
             Ok(())
         })

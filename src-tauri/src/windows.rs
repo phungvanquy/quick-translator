@@ -161,7 +161,7 @@ fn position_at_cursor(
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 
-// ── Settings window ───────────────────────────────────────────────────────────
+// ── Settings window ───────────────────────────────────────────────────────
 
 /// Create or focus the Settings window.
 pub fn show_settings_window(app: &AppHandle) -> Result<(), String> {
@@ -174,15 +174,78 @@ pub fn show_settings_window(app: &AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
         .title("Quick Translator — Settings")
-        .inner_size(520.0, 420.0)
+        .inner_size(520.0, 520.0)
         .decorations(true)
         .always_on_top(false)
-        .resizable(false)
+        .resizable(true)
         .visible(true)
         .build()
         .map_err(|e| format!("failed to create settings window: {e}"))?;
 
     Ok(())
+}
+
+// ── Overlay windows (screenshot selection) ───────────────────────────────────
+
+/// Create one fullscreen borderless overlay window per monitor for region selection.
+/// Each window displays the frozen screenshot preview as its background.
+/// Returns the labels of created windows.
+pub fn show_overlay_windows(
+    app: &AppHandle,
+    previews: &[(crate::screenshot::MonitorInfo, String)],
+) -> Result<Vec<String>, String> {
+    // Close any existing overlays first
+    close_overlay_windows(app);
+
+    let mut labels = Vec::new();
+
+    for (i, (info, _preview_url)) in previews.iter().enumerate() {
+        let label = format!("overlay-{i}");
+
+        let scale = info.scale_factor as f64;
+        let logical_w = info.width as f64 / scale;
+        let logical_h = info.height as f64 / scale;
+
+        let window = WebviewWindowBuilder::new(
+            app,
+            &label,
+            WebviewUrl::App("overlay.html".into()),
+        )
+            .title("Screenshot")
+            .inner_size(logical_w, logical_h)
+            .decorations(false)
+            .transparent(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(i == 0)
+            .visible(false)
+            .build()
+            .map_err(|e| format!("failed to create overlay-{i}: {e}"))?;
+
+        // Position at monitor origin using physical pixels
+        let _ = window.set_position(PhysicalPosition::new(info.x as f64, info.y as f64));
+        let _ = window.show();
+        if i == 0 {
+            let _ = window.set_focus();
+        }
+
+        labels.push(label);
+    }
+
+    Ok(labels)
+}
+
+/// Close all overlay windows.
+pub fn close_overlay_windows(app: &AppHandle) {
+    for i in 0..16 {
+        let label = format!("overlay-{i}");
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.close();
+        } else {
+            break;
+        }
+    }
 }
 
 // ── URL encoding helper ───────────────────────────────────────────────────────

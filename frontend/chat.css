@@ -271,3 +271,32 @@ html, body {
   padding-left: 22px;
 }
 .msg-ai li { margin: 2px 0; }
+
+/* ── Image strip (screenshot thumbnails) ─────────────────────────────────── */
+
+.image-strip {
+  display: flex;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--mantle);
+  overflow-x: auto;
+}
+
+.image-strip.hidden {
+  display: none;
+}
+
+.image-thumb {
+  max-height: 80px;
+  max-width: 140px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.image-thumb:hover {
+  opacity: 0.8;
+}

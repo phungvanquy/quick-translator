@@ -2,6 +2,7 @@
 //! Persists to ~/.quicktranslator_config.json
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -30,6 +31,94 @@ fn default_custom_prompt() -> String {
         .to_string()
 }
 
+// ── Hotkey configuration ─────────────────────────────────────────────────────
+
+/// Allowed prefix values. Only these are accepted by validation.
+pub const HOTKEY_PREFIX_WHITELIST: &[&str] = &["Ctrl+C", "Ctrl+Insert", "RCtrl", "RShift"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HotkeyEntry {
+    pub prefix: String,
+    pub then: String,
+    pub window_ms: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HotkeyConfig {
+    #[serde(default = "default_hotkey_translate")]
+    pub translate: HotkeyEntry,
+    #[serde(default = "default_hotkey_chat")]
+    pub chat: HotkeyEntry,
+    #[serde(default = "default_hotkey_screenshot")]
+    pub screenshot: HotkeyEntry,
+}
+
+fn default_hotkey_translate() -> HotkeyEntry {
+    HotkeyEntry { prefix: "Ctrl+C".into(), then: "C".into(), window_ms: 600 }
+}
+
+fn default_hotkey_chat() -> HotkeyEntry {
+    HotkeyEntry { prefix: "Ctrl+C".into(), then: "Space".into(), window_ms: 600 }
+}
+
+fn default_hotkey_screenshot() -> HotkeyEntry {
+    HotkeyEntry { prefix: "RCtrl".into(), then: "RCtrl".into(), window_ms: 400 }
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        HotkeyConfig {
+            translate: default_hotkey_translate(),
+            chat: default_hotkey_chat(),
+            screenshot: default_hotkey_screenshot(),
+        }
+    }
+}
+
+impl HotkeyConfig {
+    /// Validate hotkey configuration. Returns Ok(()) if valid, or a list of problems.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+        let entries = [
+            ("translate", &self.translate),
+            ("chat", &self.chat),
+            ("screenshot", &self.screenshot),
+        ];
+
+        for (name, entry) in &entries {
+            if !HOTKEY_PREFIX_WHITELIST.contains(&entry.prefix.as_str()) {
+                errors.push(format!(
+                    "{name}: prefix '{}' not in whitelist {:?}",
+                    entry.prefix, HOTKEY_PREFIX_WHITELIST
+                ));
+            }
+            if !(200..=1000).contains(&entry.window_ms) {
+                errors.push(format!(
+                    "{name}: window_ms {} out of range [200, 1000]",
+                    entry.window_ms
+                ));
+            }
+            if entry.then.is_empty() {
+                errors.push(format!("{name}: 'then' key is empty"));
+            }
+        }
+
+        // Check for duplicate (prefix, then) pairs
+        let mut seen = HashSet::new();
+        for (name, entry) in &entries {
+            let key = (entry.prefix.as_str(), entry.then.as_str());
+            if !seen.insert(key) {
+                errors.push(format!(
+                    "{name}: duplicate combo ({}, {})",
+                    entry.prefix, entry.then
+                ));
+            }
+        }
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
 // ── Config struct ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,8 +135,14 @@ pub struct Config {
     #[serde(default = "default_model")]
     pub model: String,
 
+    #[serde(default)]
+    pub vision_model: String,
+
     #[serde(default = "default_custom_prompt")]
     pub custom_prompt: String,
+
+    #[serde(default)]
+    pub hotkeys: HotkeyConfig,
 }
 
 impl Default for Config {
@@ -57,7 +152,9 @@ impl Default for Config {
             base_url: default_base_url(),
             target_language: default_target_language(),
             model: default_model(),
+            vision_model: String::new(),
             custom_prompt: default_custom_prompt(),
+            hotkeys: HotkeyConfig::default(),
         }
     }
 }
@@ -82,7 +179,16 @@ pub fn load() -> Config {
         match fs::read_to_string(&path) {
             Ok(text) => {
                 match serde_json::from_str::<Config>(&text) {
-                    Ok(cfg) => return cfg,
+                    Ok(mut cfg) => {
+                        if let Err(errors) = cfg.hotkeys.validate() {
+                            eprintln!(
+                                "hotkey config invalid, using defaults: {}",
+                                errors.join("; ")
+                            );
+                            cfg.hotkeys = HotkeyConfig::default();
+                        }
+                        return cfg;
+                    }
                     Err(_) => {
                         // Malformed — return defaults, do NOT overwrite
                         return Config::default();
@@ -137,8 +243,17 @@ impl ConfigState {
         if let Some(v) = partial.model {
             cfg.model = v;
         }
+        if let Some(v) = partial.vision_model {
+            cfg.vision_model = v;
+        }
         if let Some(v) = partial.custom_prompt {
             cfg.custom_prompt = v;
+        }
+        if let Some(v) = partial.hotkeys {
+            if let Err(errors) = v.validate() {
+                return Err(format!("hotkey config invalid: {}", errors.join("; ")));
+            }
+            cfg.hotkeys = v;
         }
         save_to_disk(&cfg)
     }
@@ -151,5 +266,7 @@ pub struct ConfigUpdate {
     pub base_url: Option<String>,
     pub target_language: Option<String>,
     pub model: Option<String>,
+    pub vision_model: Option<String>,
     pub custom_prompt: Option<String>,
+    pub hotkeys: Option<HotkeyConfig>,
 }

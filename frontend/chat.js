@@ -5,7 +5,7 @@
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
-const { listen } = window.__TAURI__.event;
+const { listen, emit } = window.__TAURI__.event;
 
 // ── Parse init params ─────────────────────────────────────────────────────────
 function getParams() {
@@ -27,6 +27,8 @@ const closeBtn     = document.getElementById('close-btn');
 let selectedText = '';
 let history = [];       // [{role, content}, …], capped at 50
 let streaming = false;
+let imageUrls = [];     // base64 data URLs of attached screenshots (max 2)
+const MAX_IMAGES = 2;
 
 // ── Close ─────────────────────────────────────────────────────────────────────
 let isClosed = false;
@@ -34,6 +36,8 @@ async function closePopup() {
   if (isClosed) return;
   isClosed = true;
   try {
+    // Signal backend to clear screenshot state (drops images from RAM)
+    await emit('chat://closed', {});
     await getCurrentWindow().close();
   } catch (_e) { /* already closing */ }
 }
@@ -111,10 +115,13 @@ async function send() {
     finish() {
       aiEl.innerHTML = renderMarkdown(full); // final: rendered markdown (escaped)
       scrollToBottom();
-      // Record the turn and cap history to the last 50 messages
-      history.push({ role: 'user', content: question });
+      // Record the assistant turn and cap history to the last 50 messages
       history.push({ role: 'assistant', content: full.trim() });
       if (history.length > 50) history = history.slice(history.length - 50);
+      // After first send with images, clear image URLs so subsequent
+      // messages don't re-attach them (they're already in history)
+      imageUrls = [];
+      updateImageStrip();
       streaming = false;
       sendBtn.disabled = false;
       sendBtn.textContent = 'Send';
@@ -123,6 +130,19 @@ async function send() {
   };
 
   try {
+    // Build the current message content — multimodal if images are attached
+    let userContent = question;
+    if (imageUrls.length > 0) {
+      const parts = [{ type: 'text', text: question }];
+      for (const url of imageUrls) {
+        parts.push({ type: 'image_url', image_url: { url } });
+      }
+      userContent = parts;
+    }
+
+    // Record user turn with the appropriate content type
+    history.push({ role: 'user', content: userContent });
+
     await invoke('chat_send', { selectedText, question, history });
   } catch (e) {
     full += `\n⚠ Error: ${e}`;
@@ -132,6 +152,56 @@ async function send() {
 
 // The in-flight assistant turn, or null. Set in send(), consumed by listeners.
 let currentTurn = null;
+
+// ── Image handling ──────────────────────────────────────────────────────────
+
+function attachImage(dataUrl) {
+  if (imageUrls.length >= MAX_IMAGES) {
+    // Enforce cap: remove oldest image from history too
+    const oldUrl = imageUrls.shift();
+    // Replace old image in history with placeholder
+    for (const msg of history) {
+      if (Array.isArray(msg.content)) {
+        msg.content = msg.content.map(part => {
+          if (part.type === 'image_url' && part.image_url && part.image_url.url === oldUrl) {
+            return { type: 'text', text: '[earlier screenshot removed from context]' };
+          }
+          return part;
+        });
+      }
+    }
+  }
+  imageUrls.push(dataUrl);
+  updateImageStrip();
+}
+
+function updateImageStrip() {
+  // Create or find the image strip container
+  let strip = document.getElementById('image-strip');
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.id = 'image-strip';
+    strip.className = 'image-strip';
+    // Insert after context strip
+    const ctx = document.getElementById('context-strip');
+    ctx.parentNode.insertBefore(strip, ctx.nextSibling);
+  }
+
+  strip.innerHTML = '';
+  if (imageUrls.length === 0) {
+    strip.classList.add('hidden');
+    return;
+  }
+  strip.classList.remove('hidden');
+
+  for (const url of imageUrls) {
+    const thumb = document.createElement('img');
+    thumb.className = 'image-thumb';
+    thumb.src = url;
+    thumb.alt = 'Screenshot';
+    strip.appendChild(thumb);
+  }
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -152,6 +222,15 @@ async function init() {
   });
   await listen('chat://done', () => {
     if (currentTurn) currentTurn.finish();
+  });
+
+  // Listen for image attachments from the screenshot flow
+  await listen('chat://attach-image', (event) => {
+    attachImage(event.payload);
+    // If no text context, switch header to reflect image context
+    if (!selectedText.trim()) {
+      headerLabel.textContent = 'Chat';
+    }
   });
 
   // Send triggers

@@ -54,6 +54,19 @@
       </div>
 
       <div class="field">
+        <label class="label" for="vision-model">Vision Model</label>
+        <input
+          class="input"
+          type="text"
+          id="vision-model"
+          name="vision_model"
+          placeholder=""
+          spellcheck="false"
+        />
+        <span class="field-hint">Model for screenshot/vision requests. Leave empty to use the main model.</span>
+      </div>
+
+      <div class="field">
         <label class="label" for="target-lang">Target Language</label>
         <input
           class="input"
@@ -88,6 +101,57 @@
         <button type="submit" class="btn-primary" id="save-btn">Save</button>
         <button type="button" class="btn-secondary" id="test-btn">Test connection</button>
         <span class="save-status" id="save-status"></span>
+      </div>
+
+      <!-- Hotkeys section -->
+      <div class="hotkeys-section">
+        <div class="hotkeys-header">
+          <h2 class="section-title">Hotkeys</h2>
+          <button type="button" class="btn-link" id="reset-hotkeys-btn">
+            <svg class="ic" aria-hidden="true"><use href="#ic-refresh"/></svg>
+            <span>Reset to defaults</span>
+          </button>
+        </div>
+        <p class="field-hint hotkeys-hint">Two-step sequences: press prefix, then the trigger key within the time window.</p>
+
+        <div class="hotkey-row" data-action="translate">
+          <span class="hotkey-label">Translate</span>
+          <select class="hotkey-prefix" aria-label="Translate prefix">
+            <option value="Ctrl+C">Ctrl+C</option>
+            <option value="Ctrl+Insert">Ctrl+Insert</option>
+            <option value="RCtrl">Right Ctrl</option>
+            <option value="RShift">Right Shift</option>
+          </select>
+          <span class="hotkey-arrow">→</span>
+          <button type="button" class="hotkey-then" aria-label="Translate trigger key" data-key="">…</button>
+          <span class="hotkey-warn"></span>
+        </div>
+
+        <div class="hotkey-row" data-action="chat">
+          <span class="hotkey-label">Chat</span>
+          <select class="hotkey-prefix" aria-label="Chat prefix">
+            <option value="Ctrl+C">Ctrl+C</option>
+            <option value="Ctrl+Insert">Ctrl+Insert</option>
+            <option value="RCtrl">Right Ctrl</option>
+            <option value="RShift">Right Shift</option>
+          </select>
+          <span class="hotkey-arrow">→</span>
+          <button type="button" class="hotkey-then" aria-label="Chat trigger key" data-key="">…</button>
+          <span class="hotkey-warn"></span>
+        </div>
+
+        <div class="hotkey-row" data-action="screenshot">
+          <span class="hotkey-label">Screenshot</span>
+          <select class="hotkey-prefix" aria-label="Screenshot prefix">
+            <option value="Ctrl+C">Ctrl+C</option>
+            <option value="Ctrl+Insert">Ctrl+Insert</option>
+            <option value="RCtrl">Right Ctrl</option>
+            <option value="RShift">Right Shift</option>
+          </select>
+          <span class="hotkey-arrow">→</span>
+          <button type="button" class="hotkey-then" aria-label="Screenshot trigger key" data-key="">…</button>
+          <span class="hotkey-warn"></span>
+        </div>
       </div>
     </form>
   </div>

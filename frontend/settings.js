@@ -12,6 +12,7 @@ const DEFAULT_PROMPT =
 const apiKeyInput     = document.getElementById('api-key');
 const baseUrlInput    = document.getElementById('base-url');
 const modelInput      = document.getElementById('model');
+const visionModelInput = document.getElementById('vision-model');
 const targetLangInput = document.getElementById('target-lang');
 const promptInput     = document.getElementById('custom-prompt');
 const resetPromptBtn  = document.getElementById('reset-prompt-btn');
@@ -55,8 +56,10 @@ async function loadConfig() {
     apiKeyInput.value     = cfg.api_key          || '';
     baseUrlInput.value    = cfg.base_url         || '';
     modelInput.value      = cfg.model            || '';
+    visionModelInput.value = cfg.vision_model    || '';
     targetLangInput.value = cfg.target_language  || '';
     promptInput.value     = cfg.custom_prompt    || DEFAULT_PROMPT;
+    populateHotkeys(cfg.hotkeys);
   } catch (e) {
     showStatus('Failed to load config: ' + e, true);
   }
@@ -76,6 +79,19 @@ async function saveConfig(e) {
     return;
   }
 
+  // Validate hotkeys — block save on conflicts
+  const hotkeys = getHotkeyValues();
+  const hasConflict = !validateHotkeys();
+  const hasMissing = Object.values(hotkeys).some(h => !h.then);
+  if (hasConflict) {
+    showStatus('Fix hotkey conflicts before saving.', 'error');
+    return;
+  }
+  if (hasMissing) {
+    showStatus('All hotkeys must have a trigger key set.', 'error');
+    return;
+  }
+
   // Blank prompt falls back to the default template (parity with settings.py)
   const promptVal = promptInput.value.trim() || DEFAULT_PROMPT;
 
@@ -83,8 +99,10 @@ async function saveConfig(e) {
     api_key:         apiKey,
     base_url:        baseUrl,
     model:           modelInput.value.trim(),
+    vision_model:    visionModelInput.value.trim(),
     target_language: targetLangInput.value.trim(),
     custom_prompt:   promptVal,
+    hotkeys,
   };
 
   try {
@@ -124,7 +142,18 @@ async function testConnection() {
       apiKey:  apiKeyInput.value.trim(),
       model:   modelInput.value.trim(),
     });
-    showStatus('Connection OK ' + (msg || ''), false);
+
+    const visionModel = visionModelInput.value.trim();
+    if (visionModel) {
+      const msg2 = await invoke('test_connection', {
+        baseUrl: baseUrlInput.value.trim(),
+        apiKey:  apiKeyInput.value.trim(),
+        model:   visionModel,
+      });
+      showStatus(`Model OK (${msg}) · Vision OK (${msg2})`, false);
+    } else {
+      showStatus('Connection OK ' + (msg || ''), false);
+    }
   } catch (err) {
     showStatus('Test failed: ' + err, 'error');
   } finally {
@@ -154,4 +183,142 @@ testBtn.addEventListener('click', testConnection);
 resetPromptBtn.addEventListener('click', () => {
   promptInput.value = DEFAULT_PROMPT;
 });
+
+// ── Hotkeys section ──────────────────────────────────────────────────────────
+
+const HOTKEY_DEFAULTS = {
+  translate:  { prefix: 'Ctrl+C', then: 'C',     window_ms: 600 },
+  chat:       { prefix: 'Ctrl+C', then: 'Space', window_ms: 600 },
+  screenshot: { prefix: 'RCtrl',  then: 'RCtrl', window_ms: 400 },
+};
+
+// Known dangerous combos when Ctrl is held (prefix is Ctrl+C/Ctrl+Insert)
+const DANGEROUS_CTRL_COMBOS = {
+  S: 'Ctrl+S = Save in most apps',
+  W: 'Ctrl+W = Close tab/window',
+  Q: 'Ctrl+Q = Quit in some apps',
+  Z: 'Ctrl+Z = Undo',
+  A: 'Ctrl+A = Select all',
+  V: 'Ctrl+V = Paste',
+  X: 'Ctrl+X = Cut',
+  N: 'Ctrl+N = New window',
+  T: 'Ctrl+T = New tab',
+  F: 'Ctrl+F = Find',
+};
+
+const hotkeyRows = document.querySelectorAll('.hotkey-row');
+const resetHotkeysBtn = document.getElementById('reset-hotkeys-btn');
+
+// Maps event.code to a display label and a config key name
+function codeToKey(code, location) {
+  if (code === 'ControlRight') return { label: 'RCtrl', key: 'RCtrl' };
+  if (code === 'ControlLeft') return { label: 'LCtrl', key: 'LCtrl' };
+  if (code === 'ShiftRight') return { label: 'RShift', key: 'RShift' };
+  if (code === 'ShiftLeft') return { label: 'LShift', key: 'LShift' };
+  if (code === 'Space') return { label: 'Space', key: 'Space' };
+  if (code === 'Insert') return { label: 'Insert', key: 'Insert' };
+  if (code.startsWith('Key')) return { label: code.slice(3), key: code.slice(3) };
+  if (code.startsWith('Digit')) return { label: code.slice(5), key: code.slice(5) };
+  if (code.startsWith('Numpad')) return { label: 'Num' + code.slice(6), key: 'Num' + code.slice(6) };
+  if (code.startsWith('F') && /^F\d+$/.test(code)) return { label: code, key: code };
+  return { label: code, key: code };
+}
+
+function isModifierOnly(code) {
+  return /^(Control|Shift|Alt|Meta)(Left|Right)?$/.test(code);
+}
+
+// Set up capture on each "then" button
+hotkeyRows.forEach(row => {
+  const btn = row.querySelector('.hotkey-then');
+  btn.addEventListener('focus', () => {
+    btn.classList.add('capturing');
+    btn.textContent = 'Press key…';
+  });
+  btn.addEventListener('blur', () => {
+    btn.classList.remove('capturing');
+    const key = btn.dataset.key;
+    btn.textContent = key || '…';
+  });
+  btn.addEventListener('keydown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      btn.blur();
+      return;
+    }
+    if (isModifierOnly(e.code)) return;
+    const { label, key } = codeToKey(e.code, e.location);
+    btn.dataset.key = key;
+    btn.textContent = label;
+    btn.classList.remove('capturing');
+    btn.blur();
+    validateHotkeys();
+  });
+
+  // Prefix change also triggers validation
+  const select = row.querySelector('.hotkey-prefix');
+  select.addEventListener('change', validateHotkeys);
+});
+
+function getHotkeyValues() {
+  const result = {};
+  hotkeyRows.forEach(row => {
+    const action = row.dataset.action;
+    const prefix = row.querySelector('.hotkey-prefix').value;
+    const thenKey = row.querySelector('.hotkey-then').dataset.key;
+    result[action] = { prefix, then: thenKey || '', window_ms: HOTKEY_DEFAULTS[action].window_ms };
+  });
+  return result;
+}
+
+function validateHotkeys() {
+  const values = getHotkeyValues();
+  const actions = Object.keys(values);
+  const combos = actions.map(a => values[a].prefix + '+' + values[a].then);
+
+  hotkeyRows.forEach(row => {
+    const action = row.dataset.action;
+    const warn = row.querySelector('.hotkey-warn');
+    const entry = values[action];
+    const warnings = [];
+
+    // Check for side-effect warning
+    if ((entry.prefix === 'Ctrl+C' || entry.prefix === 'Ctrl+Insert') && DANGEROUS_CTRL_COMBOS[entry.then]) {
+      warnings.push(DANGEROUS_CTRL_COMBOS[entry.then]);
+    }
+
+    // Check for conflicts with other actions
+    const myCombo = entry.prefix + '+' + entry.then;
+    for (const other of actions) {
+      if (other === action) continue;
+      const otherCombo = values[other].prefix + '+' + values[other].then;
+      if (myCombo === otherCombo && entry.then) {
+        warnings.push('Same combo as ' + other.charAt(0).toUpperCase() + other.slice(1));
+      }
+    }
+
+    warn.textContent = warnings.length ? '⚠ ' + warnings.join(' · ') : '';
+  });
+
+  return !combos.some((c, i) => combos.indexOf(c) !== i && values[actions[i]].then);
+}
+
+function populateHotkeys(hotkeys) {
+  const cfg = hotkeys || HOTKEY_DEFAULTS;
+  hotkeyRows.forEach(row => {
+    const action = row.dataset.action;
+    const entry = cfg[action] || HOTKEY_DEFAULTS[action];
+    row.querySelector('.hotkey-prefix').value = entry.prefix;
+    const btn = row.querySelector('.hotkey-then');
+    btn.dataset.key = entry.then;
+    btn.textContent = entry.then || '…';
+  });
+  validateHotkeys();
+}
+
+resetHotkeysBtn.addEventListener('click', () => {
+  populateHotkeys(HOTKEY_DEFAULTS);
+});
+
 loadConfig().catch(console.error);
