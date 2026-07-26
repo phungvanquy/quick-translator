@@ -3,3 +3,6 @@ config.json
 
 # Rust / Tauri build artifacts
 src-tauri/target/
+
+# Per-machine tool permissions, accumulated per session — not shared config
+.claude/settings.local.json

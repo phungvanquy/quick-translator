@@ -1,8 +1,5 @@
-# translate-hotkey Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change rewrite-rust-tauri-stage1. Update Purpose after archive.
-## Requirements
 ### Requirement: Double Ctrl+C triggers translation
 
 The translate action SHALL be triggered by the two-step sequence stored in the `hotkeys.translate` config entry, defaulting to `Ctrl+C` → `C` within 600ms. It MUST NOT be hardcoded — the double Ctrl+C is now the default binding rather than the only one.
@@ -23,23 +20,3 @@ The trigger continues to share the single `rdev::listen` thread and the debounce
 
 - **WHEN** the translate action fires
 - **THEN** the selection is read via the existing `get_clipboard_after_copy` polling, since the whitelisted prefixes are themselves copy operations
-
-### Requirement: Clipboard capture after copy
-
-When the translate flow fires, the application SHALL read the freshly copied selection from the clipboard, reproducing the Python `get_clipboard_after_copy` polling behavior using the `arboard` crate.
-
-#### Scenario: Clipboard updates within the poll window
-
-- **WHEN** the translate flow reads the clipboard after a Ctrl+C copy
-- **THEN** it polls up to 10 times at 50ms intervals, and returns the new clipboard text (trimmed) as soon as the content differs from the value captured before the copy
-
-#### Scenario: Clipboard does not change
-
-- **WHEN** the clipboard content never changes during the poll window
-- **THEN** the previously captured clipboard text (trimmed) is returned as a fallback
-
-#### Scenario: Empty selection
-
-- **WHEN** the resolved clipboard text is empty
-- **THEN** the translate flow does not open a popup or issue an API request
-

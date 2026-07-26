@@ -1,0 +1,16 @@
+# Keep the Augment semantic index focused. Syntax = .gitignore globs.
+
+# Archived DELTA specs only. Each is a near-verbatim copy of a spec already
+# promoted into openspec/specs/, so indexing both made a single query return
+# 3-4 identical hits and pushed real code out of the results.
+# The sibling proposal.md / design.md / tasks.md stay indexed on purpose —
+# they hold decision rationale that exists nowhere else.
+openspec/changes/archive/*/specs/
+
+# Build output
+src-tauri/target/
+src-tauri/gen/
+
+# Binary assets (no text to retrieve; generator script stays indexed)
+icons/*.png
+icons/*.ico
