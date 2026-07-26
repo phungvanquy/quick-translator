@@ -2,11 +2,14 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* No opaque background: the canvas IS the frozen screenshot. If the preview
+   ever fails to load, a black page would look like a hang — better to show
+   nothing and let the cancel path close the overlay. */
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000;
+  background: transparent;
   cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;

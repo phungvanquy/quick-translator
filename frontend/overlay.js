@@ -2,7 +2,8 @@
 // Receives a frozen screenshot as background, lets user drag-select a region,
 // then emits the selection rectangle to the backend.
 
-const { emit, listen } = window.__TAURI__.event;
+const { emit } = window.__TAURI__.event;
+const { invoke } = window.__TAURI__.core;
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -14,20 +15,19 @@ let curX = 0, curY = 0;
 
 const DIMMING = 'rgba(0, 0, 0, 0.4)';
 
-// ── Load the preview image via Tauri event ───────────────────────────────────
+// Which monitor this overlay covers — sent back with the selection so the
+// backend crops from the matching capture.
+const monitorIndex = Number(
+  new URLSearchParams(window.location.search).get('monitor') || 0
+);
+
+// ── Load the preview image ───────────────────────────────────────────────────
+// Pull, don't wait for a push: an emit from the backend would race WebView2
+// startup and be dropped (Tauri events are not buffered), leaving a black canvas.
 
 async function init() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-
-  await listen('overlay://preview', (event) => {
-    const src = event.payload;
-    img = new Image();
-    img.onload = () => {
-      drawBase();
-    };
-    img.src = src;
-  });
 
   window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
@@ -35,8 +35,19 @@ async function init() {
     if (img) drawBase();
   });
 
-  // Signal ready so backend can send the preview
-  await emit('overlay://ready', {});
+  let src;
+  try {
+    src = await invoke('get_overlay_preview', { monitorIndex });
+  } catch (e) {
+    console.error('preview fetch failed', e);
+    cancel();
+    return;
+  }
+
+  img = new Image();
+  img.onload = () => drawBase();
+  img.onerror = () => cancel();
+  img.src = src;
 }
 
 // ── Drawing ──────────────────────────────────────────────────────────────────
@@ -76,6 +87,7 @@ function drawSelection() {
 canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) { cancel(); return; }
   if (e.button !== 0) return;
+  if (!img) return; // preview not loaded yet — nothing to select from
   dragging = true;
   startX = e.clientX;
   startY = e.clientY;
@@ -105,7 +117,10 @@ canvas.addEventListener('mouseup', (e) => {
   if (w < 5 || h < 5) return;
 
   const dpr = window.devicePixelRatio || 1;
-  emit('overlay://select', { x, y, width: w, height: h, dpr });
+  emit('overlay://select', {
+    x, y, width: w, height: h, dpr,
+    monitor: monitorIndex,
+  });
 });
 
 // Prevent context menu on right-click

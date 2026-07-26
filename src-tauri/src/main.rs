@@ -49,6 +49,24 @@ fn open_settings_cmd(app: AppHandle) -> Result<(), String> {
     windows::show_settings_window(&app)
 }
 
+/// Return the frozen screenshot preview for one overlay window.
+///
+/// Pull model, not push: the overlay calls this once its listeners/canvas are
+/// ready. An emit from the backend would race WebView2 startup and be dropped
+/// (Tauri events are not buffered), leaving the overlay black.
+#[tauri::command]
+fn get_overlay_preview(
+    state: tauri::State<'_, screenshot::ScreenshotStore>,
+    monitor_index: usize,
+) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let s = guard.as_ref().ok_or_else(|| "no screenshot in flight".to_string())?;
+    s.previews
+        .get(monitor_index)
+        .cloned()
+        .ok_or_else(|| format!("no preview for monitor {monitor_index}"))
+}
+
 /// Test the given endpoint/key/model with a minimal live request (Settings UI).
 /// Takes current-form values so the user can test before saving.
 #[tauri::command]
@@ -168,40 +186,30 @@ pub async fn handle_screenshot_trigger(app: AppHandle) {
         return;
     }
 
-    // Encode previews for each monitor
-    let previews: Vec<(screenshot::MonitorInfo, String)> = captures
+    // Encode a preview per monitor for the overlay to display
+    let previews: Vec<String> = captures
         .iter()
-        .map(|(info, img)| (info.clone(), screenshot::prepare_preview(img)))
+        .map(|(_info, img)| screenshot::prepare_preview(img))
         .collect();
+    let monitor_infos: Vec<screenshot::MonitorInfo> =
+        captures.iter().map(|(info, _)| info.clone()).collect();
 
-    // Store full-res captures in state
+    // Store captures + previews BEFORE creating windows: each overlay pulls its
+    // preview via get_overlay_preview as soon as its canvas is ready, which can
+    // happen before this function returns.
     {
         let store = app.state::<screenshot::ScreenshotStore>();
         let mut guard = store.0.lock().unwrap();
-        *guard = Some(screenshot::ScreenshotState::new(captures));
+        *guard = Some(screenshot::ScreenshotState::new(captures, previews));
     }
 
     // Open overlay windows
-    if let Err(e) = windows::show_overlay_windows(&app, &previews) {
+    if let Err(e) = windows::show_overlay_windows(&app, &monitor_infos) {
         eprintln!("overlay window error: {e}");
         let store = app.state::<screenshot::ScreenshotStore>();
         let mut guard = store.0.lock().unwrap();
         *guard = None;
-        return;
     }
-
-    // Send preview to overlay after a short delay for webview init
-    let app2 = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        for (i, (_info, preview)) in previews.iter().enumerate() {
-            let label = format!("overlay-{i}");
-            if let Some(w) = app2.get_webview_window(&label) {
-                use tauri::Emitter;
-                let _ = w.emit("overlay://preview", preview);
-            }
-        }
-    });
 }
 
 // ── Overlay select handler ───────────────────────────────────────────────────
@@ -218,6 +226,7 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
         width: f64,
         height: f64,
         dpr: f64,
+        monitor: usize,
     }
 
     let payload: SelectPayload = match serde_json::from_str(event.payload()) {
@@ -236,7 +245,9 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
         height: (payload.height * payload.dpr) as u32,
     };
 
-    // Crop from stored full-res capture (use first monitor for now)
+    // Crop from the capture belonging to the monitor the user dragged on —
+    // coordinates are relative to that overlay, so any other capture would
+    // yield the wrong region on a multi-monitor setup.
     let data_url = {
         let store = app.state::<screenshot::ScreenshotStore>();
         let mut guard = store.0.lock().unwrap();
@@ -248,8 +259,13 @@ async fn handle_overlay_select(app: AppHandle, event: tauri::Event) {
             }
         };
 
-        // Crop from the first monitor's capture (overlay-0 is the focused one)
-        let (_, ref img) = state.captures[0];
+        let img = match state.captures.get(payload.monitor) {
+            Some((_, img)) => img,
+            None => {
+                eprintln!("no capture for monitor {}", payload.monitor);
+                return;
+            }
+        };
         let cropped = screenshot::crop_region(img, &rect);
         let url = screenshot::prepare_for_api(&cropped);
         state.prepared_image = Some(url.clone());
@@ -417,6 +433,7 @@ fn main() {
             get_config,
             update_config,
             open_settings_cmd,
+            get_overlay_preview,
             chat_send,
             test_connection,
             tts_speak,

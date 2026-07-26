@@ -192,29 +192,34 @@ pub fn show_settings_window(app: &AppHandle) -> Result<(), String> {
 /// Returns the labels of created windows.
 pub fn show_overlay_windows(
     app: &AppHandle,
-    previews: &[(crate::screenshot::MonitorInfo, String)],
+    monitors: &[crate::screenshot::MonitorInfo],
 ) -> Result<Vec<String>, String> {
     // Close any existing overlays first
     close_overlay_windows(app);
 
     let mut labels = Vec::new();
 
-    for (i, (info, _preview_url)) in previews.iter().enumerate() {
+    for (i, info) in monitors.iter().enumerate() {
         let label = format!("overlay-{i}");
 
         let scale = info.scale_factor as f64;
         let logical_w = info.width as f64 / scale;
         let logical_h = info.height as f64 / scale;
 
+        // Only the monitor index goes in the URL — the preview image itself is
+        // pulled over IPC. A multi-MB base64 data URL in a query string would
+        // blow past URL length limits.
+        let url = format!("overlay.html?monitor={i}");
+
         let window = WebviewWindowBuilder::new(
             app,
             &label,
-            WebviewUrl::App("overlay.html".into()),
+            WebviewUrl::App(url.into()),
         )
             .title("Screenshot")
             .inner_size(logical_w, logical_h)
             .decorations(false)
-            .transparent(false)
+            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .resizable(false)

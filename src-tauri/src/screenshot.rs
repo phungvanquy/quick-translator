@@ -32,12 +32,15 @@ pub struct PhysicalRect {
 /// Holds captured screenshots in RAM until the chat popup closes.
 pub struct ScreenshotState {
     pub captures: Vec<(MonitorInfo, RgbaImage)>,
+    /// JPEG q60 data URLs, one per monitor, indexed the same as `captures`.
+    /// The overlay pulls these via the get_overlay_preview command.
+    pub previews: Vec<String>,
     pub prepared_image: Option<String>, // base64 data URL ready for API
 }
 
 impl ScreenshotState {
-    pub fn new(captures: Vec<(MonitorInfo, RgbaImage)>) -> Self {
-        ScreenshotState { captures, prepared_image: None }
+    pub fn new(captures: Vec<(MonitorInfo, RgbaImage)>, previews: Vec<String>) -> Self {
+        ScreenshotState { captures, previews, prepared_image: None }
     }
 }
 
