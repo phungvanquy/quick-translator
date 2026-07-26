@@ -63,11 +63,11 @@ pub fn capture_all_monitors() -> Result<Vec<(MonitorInfo, RgbaImage)>, String> {
 
     for mon in monitors {
         let info = MonitorInfo {
-            x: mon.x(),
-            y: mon.y(),
-            width: mon.width(),
-            height: mon.height(),
-            scale_factor: mon.scale_factor(),
+            x: mon.x().map_err(|e| format!("monitor x failed: {e}"))?,
+            y: mon.y().map_err(|e| format!("monitor y failed: {e}"))?,
+            width: mon.width().map_err(|e| format!("monitor width failed: {e}"))?,
+            height: mon.height().map_err(|e| format!("monitor height failed: {e}"))?,
+            scale_factor: mon.scale_factor().map_err(|e| format!("monitor scale failed: {e}"))?,
         };
         let img = mon.capture_image()
             .map_err(|e| format!("capture failed on monitor at ({},{}): {e}", info.x, info.y))?;
@@ -93,9 +93,7 @@ pub fn crop_region(image: &RgbaImage, rect: &PhysicalRect) -> RgbaImage {
     let w = rect.width.min(iw - x);
     let h = rect.height.min(ih - y);
 
-    let dyn_img = DynamicImage::ImageRgba8(image.clone());
-    let cropped = dyn_img.crop_imm(x, y, w, h);
-    cropped.to_rgba8()
+    image::imageops::crop_imm(image, x, y, w, h).to_image()
 }
 
 // ── Encode for API ───────────────────────────────────────────────────────────
