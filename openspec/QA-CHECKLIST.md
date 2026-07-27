@@ -2,16 +2,18 @@
 
 Requires a Windows run with a global keyboard hook + API key (not headless/CI). Verify before tagging.
 
+Ticked items were confirmed on real Windows against v0.4.0 (2026-07-27) — nothing failed. Unticked items are simply not exercised yet, not known-broken. The ones still open mostly need instrumentation rather than clicking: the duplicate-question check wants a proxy or verbose server log, the capture-release check wants an RSS watch, and cancellation wants provider usage visible.
+
 ## Core
 - [ ] Ctrl+C+Space opens chat with selection as context; Ctrl+C+C still translates; neither double-fires
 - [ ] Esc / close button close the chat popup; clearing context switches to Free Chat. Clicking OUTSIDE must NOT close it
 - [ ] Custom prompt loads, saves, resets to default; blank-save falls back to default template; a subsequent translate uses the saved prompt
-- [ ] `cargo tauri build` passes on Windows CI
+- [x] `cargo tauri build` passes on Windows CI
 - [ ] Packaged exe shows NO UAC prompt; hotkeys work over normal windows; inactive over an elevated foreground window unless the app itself runs as admin
 
 ## Screenshot → vision chat
 - [ ] Screenshot hotkey (default RCtrl RCtrl) freezes the screen and shows the dimmed overlay on EVERY monitor; the frozen image is the real screen, not black
-- [ ] **Crop fidelity:** the region sent matches the region dragged — no zoom, no offset. Check at 125%/150% scaling and on a non-primary monitor, where the CSS→physical factor goes wrong
+- [x] **Crop fidelity:** the region sent matches the region dragged — no zoom, no offset. Check at 125%/150% scaling and on a non-primary monitor, where the CSS→physical factor goes wrong
 - [ ] The bright cutout under the cursor tracks the drag accurately
 - [ ] Esc and right-click cancel with no popup; a <5px drag is ignored
 - [ ] Crop opens chat with the thumbnail attached and NOTHING sent until a question is typed; a 2nd capture attaches a 2nd thumbnail; a 3rd evicts the oldest
@@ -21,8 +23,8 @@ Requires a Windows run with a global keyboard hook + API key (not headless/CI). 
 
 ## Chat correctness + window lifecycle
 - [ ] **No duplicate question:** with a proxy or verbose server log, a 2-turn chat sends the question ONCE per turn; an image turn sends one multimodal entry
-- [ ] Chat survives a focus change: transcript, typed-but-unsent input, and thumbnails intact; an in-flight response keeps streaming
-- [ ] Chat is alt-tab-able / in the taskbar; translate popup is not
+- [x] Chat survives a focus change: transcript, typed-but-unsent input, and thumbnails intact; an in-flight response keeps streaming
+- [x] Chat is alt-tab-able / in the taskbar; translate popup is not
 - [ ] **Cancellation:** close a popup mid-stream → the request stops. Two translate triggers in a row → the second popup shows only its own tokens
 - [ ] Closing the translate popup mid-stream does NOT kill an in-flight chat stream
 - [ ] **Empty-clipboard toast:** translate hotkey with nothing selected → a notice near the cursor that does NOT steal focus and self-dismisses. Nothing appears on success
@@ -32,7 +34,7 @@ Requires a Windows run with a global keyboard hook + API key (not headless/CI). 
 - [ ] **OQ:** is the ~2s toast duration right? Tune `DISMISS_MS` in `toast.js` if not
 
 ## Configurable hotkeys
-- [ ] All three hotkeys re-bind from Settings and take effect WITHOUT restart; the old binding stops firing
+- [x] All three hotkeys re-bind from Settings and take effect WITHOUT restart; the old binding stops firing
 - [ ] Re-capturing the screenshot binding to RCtrl RCtrl works (a modifier is a legal "then")
 - [ ] An unsupported key (Left Ctrl, numpad, arrows) is refused at capture rather than saved-and-dead
 - [ ] Duplicate combos are blocked inline; a hand-corrupted `hotkeys` block falls back to defaults
@@ -44,7 +46,7 @@ Requires a Windows run with a global keyboard hook + API key (not headless/CI). 
 - [ ] Hotkey stays responsive under heavy mouse/typing and still fires after long uptime
 
 ## UX
-- [ ] **Translate popup survives its own chrome:** drag the header repeatedly, then click Copy / speaker / Details / Retry — it must NOT close. Clicking a different app still closes it within ~200ms; Esc and the close button are unaffected
+- [x] **Translate popup survives its own chrome:** drag the header repeatedly, then click Copy / speaker / Details / Retry — it must NOT close. Clicking a different app still closes it within ~200ms; Esc and the close button are unaffected
 - [ ] Translate popup resizes by dragging its edge; truncated original shows full text on hover; Copy is disabled while streaming, then copies plain text with "Copied ✓". If it shows "Copy failed" (WebView2 blocks `navigator.clipboard`), switch to the Tauri clipboard-manager plugin + grant write permission in `capabilities/default.json`
 - [ ] Chat input: Enter sends, Shift+Enter newline (auto-grows ~120px then scrolls), Ctrl+Enter sends, whitespace-only does nothing, textarea resets after send
 - [ ] Chat input with a Vietnamese/CJK IME: Enter to CONFIRM a composition does NOT send
